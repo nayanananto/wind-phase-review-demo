@@ -26,6 +26,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.sessions import SessionMiddleware
 
 from scripts import run_hitl_ui as original_ui
+from deployment.casual_agent import (
+    CasualConversationAgent, OUT_OF_SCOPE_ANSWER, casual_reply_language,
+    classify_casual_message, is_unsupported_request,
+)
 
 LOGGER = logging.getLogger("wind_demo")
 DATA_MODE = os.getenv("WIND_DATA_MODE", "snapshot").lower()
@@ -161,12 +165,34 @@ def run_hitl(body: DemoRequest, request: Request) -> dict[str, Any]:
         raise HTTPException(422, "Enter a question first.")
     _check_rate(request)
     session_id = _session_id(request)
+    # Reject unsupported engineering/general tasks before the legacy memory
+    # rewrite can mistake a wind-related question for a scientific follow-up.
+    if is_unsupported_request(question):
+        return {"summary": {
+            "intent": "out_of_scope", "mode": "out_of_scope",
+            "answer": OUT_OF_SCOPE_ANSWER,
+            "demo_data_mode": STARTUP_STATUS.get("status", DATA_MODE),
+            "agent_graph": {"enabled": True, "engine": "domain_guard", "route": "out_of_scope"},
+        }}
+    casual_intent = classify_casual_message(question)
     # The original JSON memory store requires one writer at a time.
     if not PROCESS_LOCK.acquire(timeout=2):
         raise HTTPException(503, "The demo is busy. Please try again shortly.",
                             headers={"Retry-After": "5"})
     try:
         use_llm = _claim_llm_request()
+        if casual_intent is not None:
+            reply = CasualConversationAgent().respond(
+                casual_intent, language=casual_reply_language(question), enable_llm=use_llm,
+            )
+            # No scientific pipeline, feedback store, or memory writes here.
+            return {"summary": {
+                "intent": "small_talk", "mode": "casual_conversation",
+                "answer": reply.answer, "llm_requested": use_llm,
+                "llm_available": reply.llm_available, "llm_used": reply.llm_used,
+                "demo_data_mode": STARTUP_STATUS.get("status", DATA_MODE),
+                "agent_graph": {"enabled": True, "engine": "casual_agent", "route": "small_talk"},
+            }}
         pipeline = original_ui.StandaloneHITLPipeline(
             metadata_path=original_ui.DEFAULT_5MIN_METADATA,
             latest=True, top_k=5, phase_history_length=3, phase_horizon_steps=1,

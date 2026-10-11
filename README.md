@@ -82,6 +82,11 @@ Hugging Face Docker Spaces and Render.
 
 ## Public demo behavior
 
+- A separate, tool-free casual agent handles greetings, thanks and short social
+  exchanges. It uses the configured LLM for free-form wording, with standard
+  replies if the API is unavailable. Casual replies never alter forecast memory
+  or record review feedback. Mixed scientific requests use the existing workflow;
+  unsupported turbine/power calculations retain the normal out-of-scope reply.
 - The server fixes the forecasting and retrieval configuration. Requests cannot
   supply file paths, model artifacts or another visitor's session identity.
 - Signed, HTTP-only cookies select separate session memory and feedback files.

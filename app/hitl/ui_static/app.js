@@ -130,6 +130,10 @@ function renderTechnicalDetails(s) {
 
 function renderResponse(payload) {
   const s = payload.summary || {};
+  if (s.mode === "casual_conversation") {
+    return `<div class="meta">${pill("casual conversation", "strong")}${pill(s.llm_used ? "LLM reply" : "standard reply")}</div>
+      <div class="answer">${esc(s.answer || "Hello! Ask me about the wind forecast or its evidence.")}</div>`;
+  }
   const liveState = s.current_live_state || {};
   const route = s.agent_graph ? `${s.agent_graph.route}` : (s.intent || "hitl");
   const windowLabel = s.window_id && String(s.window_id).startsWith("live_")
