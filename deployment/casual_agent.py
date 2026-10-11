@@ -23,14 +23,19 @@ OUT_OF_SCOPE_ANSWER = (
 _CLAUSES: tuple[tuple[CasualIntent, re.Pattern[str]], ...] = tuple(
     (intent, re.compile(pattern + r"(?!\w)", re.IGNORECASE))
     for intent, pattern in (
-        ("greeting", r"(?:hi(?: there)?|hello(?: there)?|hey(?: there)?|good (?:morning|afternoon|evening)|greetings|হাই|হ্যালো|হেলো)"),
+        ("greeting", r"(?:(?:hi+|he+l+o+|hey+)(?:[ ,]+(?:there|everyone|all|buddy|friend|bro|sir|folks))?|good (?:morning|afternoon|evening)|greetings|হাই|হ্যালো|হেলো)"),
         ("wellbeing", r"(?:how are you(?: doing| today)?|how's it going|how is it going|hope (?:you are|you're) (?:doing )?well|(?:i am|i'm) (?:doing )?(?:well|fine|good)|কেমন আছো|কেমন আছেন|ভালো আছি|kemon acho|kemon achen|bhalo achi)"),
-        ("thanks", r"(?:(?:thanks(?: (?:a lot|so much|very much|again))?|thank you(?: (?:so much|very much|again))?)(?: for (?:the |your )?(?:forecast explanation|forecast|explanation|help|answer|response|clarification|explaining))?|much appreciated|i appreciate (?:it|your help)|ধন্যবাদ|অনেক ধন্যবাদ|dhonnobad|dhonyobad|dhanyabad|onek dhonnobad)"),
+        ("thanks",
+         r"(?:(?:thanks+|thank ?you|thank u|thx|ty|many thanks)"
+         r"(?: (?:a lot|alot|a million|a ton|a bunch|so much|very much|again))?"
+         r"(?: for (?:the |your )?(?:forecast explanation|forecast|explanation|help|answer|response|clarification|explaining|time|everything))?"
+         r"(?:[ ,]+(?:buddy|friend|bro|sir))?"
+         r"|much appreciated|i appreciate (?:it|your help|your time)|ধন্যবাদ|অনেক ধন্যবাদ|থ্যাংকস|থ্যাংক ইউ|dhonnobad|dhonyobad|dhanyabad|onek dhonnobad)"),
         ("farewell", r"(?:bye(?: bye)?|goodbye|see you(?: later)?|take care|good night|বিদায়|বিদায়|আবার দেখা হবে)"),
         ("acknowledgement", r"(?:ok(?:ay)?|got it|understood|that helps(?: a lot)?|that was helpful|that's helpful|sounds good|great|nice|আচ্ছা|ঠিক আছে|বুঝেছি|accha|achha|thik ache|bujhchi)"),
     )
 )
-_SEPARATOR = re.compile(r"(?:[\s,.!?;:\-]|&|\band\b|[🙂😊👍🙏👋])+", re.IGNORECASE)
+_SEPARATOR = re.compile(r"(?:[\s,.!?;:\-।–—]|&|\band\b|[🙂😊👍🙏👋])+", re.IGNORECASE)
 _PRIORITY: tuple[CasualIntent, ...] = ("thanks", "farewell", "wellbeing", "greeting", "acknowledgement")
 
 # These are unsupported tasks even when they mention wind or a previous result.
@@ -65,7 +70,10 @@ def classify_casual_message(question: str) -> CasualIntent | None:
     text = _normalize(question)
     if not text or len(text) > 240 or is_unsupported_request(text):
         return None
-    position = 0
+    # Decorative punctuation/emoji may surround the message, but unknown words
+    # must still fail the whole-message match below.
+    leading = _SEPARATOR.match(text)
+    position = leading.end() if leading else 0
     found: set[CasualIntent] = set()
     clauses = 0
     while position < len(text):
@@ -82,7 +90,7 @@ def classify_casual_message(question: str) -> CasualIntent | None:
             if separator is None:
                 return None
             position = separator.end()
-    return next(intent for intent in _PRIORITY if intent in found)
+    return next((intent for intent in _PRIORITY if intent in found), None)
 
 
 def casual_reply_language(question: str) -> str:

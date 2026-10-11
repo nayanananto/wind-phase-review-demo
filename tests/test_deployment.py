@@ -125,7 +125,8 @@ class DeploymentTests(unittest.TestCase):
 
     def test_casual_messages_bypass_scientific_pipeline(self):
         with patch.object(server.original_ui, "StandaloneHITLPipeline") as pipeline:
-            for question in ("Hi", "Hello, how are you?", "Thanks for the forecast", "ধন্যবাদ", "Bye"):
+            for question in ("Hi", "Hello, how are you?", "Thanks for the forecast", "ধন্যবাদ", "Bye",
+                             "👋 Hiiii!", "Hey buddy, thanks a million!", "Thankyou for your time"):
                 reply = self.ask(question)
                 self.assertEqual(reply["mode"], "casual_conversation")
                 self.assertEqual(reply["intent"], "small_talk")
@@ -152,7 +153,8 @@ class DeploymentTests(unittest.TestCase):
         session_dir = next((Path(self.temp.name) / "sessions").iterdir())
         memory_file = session_dir / "session_memory.json"
         before = memory_file.read_bytes()
-        for question in ("Thanks for the forecast", "Hello", "Okay, thanks"):
+        for question in ("Thanks for the forecast", "Hello", "Okay, thanks",
+                         "Hey buddy", "🙏 Thx!", "Thankyou for the forecast"):
             self.assertEqual(self.ask(question)["mode"], "casual_conversation")
             self.assertEqual(memory_file.read_bytes(), before)
         self.assertFalse((session_dir / "feedback.jsonl").exists())
@@ -164,14 +166,20 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(repeated["phase_support"], forecast["phase_support"])
 
     def test_mixed_polite_scientific_requests_keep_original_routes(self):
-        forecast = self.ask("Hi, predict next phase")
-        self.assertTrue(forecast["top_phase_candidates"])
-        followup = self.ask("Thanks, why was this phase selected?")
-        self.assertIn("memory", followup["mode"])
-        retrieval = self.ask("Thanks, retrieve similar historical windows")
-        self.assertTrue(retrieval["similar_windows"])
-        feedback = self.ask("Thanks, but flag this prediction")
-        self.assertEqual(feedback["agent_graph"]["route"], "feedback")
+        for questions in (
+            ("Hi, predict next phase", "Thanks, why was this phase selected?",
+             "Thanks, retrieve similar historical windows", "Thanks, but flag this prediction"),
+            ("Hiii, predict next phase", "Thanks a million, why was this phase selected?",
+             "Thx, retrieve similar historical windows", "Thankyou, but flag this prediction"),
+        ):
+            forecast = self.ask(questions[0])
+            self.assertTrue(forecast["top_phase_candidates"])
+            followup = self.ask(questions[1])
+            self.assertIn("memory", followup["mode"])
+            retrieval = self.ask(questions[2])
+            self.assertTrue(retrieval["similar_windows"])
+            feedback = self.ask(questions[3])
+            self.assertEqual(feedback["agent_graph"]["route"], "feedback")
 
     def test_unsupported_requests_keep_exact_fallback_before_and_after_forecast(self):
         questions = (
