@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: wind-phase-review-demo
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: WIND_DATA_MODE
+        value: snapshot
+      - key: SEMANTIC_LLM_MODEL
+        value: gpt-4o-mini
+      - key: WIND_SECURE_COOKIES
+        value: "1"
+      - key: WIND_SESSION_SECRET
+        generateValue: true
+# OPENAI_API_KEY is optional. Add it manually as a hosting secret.
+# Free-tier memory suitability must be confirmed on the deployed instance.

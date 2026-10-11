@@ -1,0 +1,15 @@
+.git
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+.env
+.env.*
+!.env.example
+runtime
+data/hitl
+data/hitl_session_memory.json
+tests
+docs
+verification
+*.zip

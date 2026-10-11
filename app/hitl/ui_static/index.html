@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wind Phase Review Lab</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="side">
+        <section class="hero-card">
+          <div class="brand">
+            <span class="mark" aria-hidden="true"></span>
+            <div>
+              <p class="eyebrow">Semantic Wind Thesis</p>
+              <h1>Phase Review Lab</h1>
+            </div>
+          </div>
+          <p class="hero-copy">
+            Inspect compressed wind states, forecast semantic phases, retrieve historical analogs,
+            and record human review feedback.
+          </p>
+          <div id="metadataStatus" class="status-chip">Loading live context...</div>
+        </section>
+
+        <section class="control-card">
+          <p class="panel-title">Core Actions</p>
+          <div class="quick">
+            <button data-prompt="predict next phase">Predict Phase</button>
+            <button data-prompt="explain current live state">Explain State</button>
+            <button data-prompt="retrieve similar historical windows">Similar Windows</button>
+            <button data-prompt="why was this phase selected?">Why This Phase?</button>
+            <button data-prompt="accept this prediction">Accept Forecast</button>
+            <button data-prompt="flag this prediction because support should be reviewed">Flag Forecast</button>
+            <button data-prompt="note this forecast for later review">Add Note</button>
+          </div>
+        </section>
+
+        <section class="control-card protocol-card">
+          <p class="panel-title">Active Protocol</p>
+          <div class="protocol-list" aria-label="Fixed HITL configuration">
+            <span id="llmStatus" class="protocol-badge">Loading explanation mode...</span>
+            <span class="protocol-badge">Memory/RAG on</span>
+            <span id="dataStatus" class="protocol-badge">Loading data mode...</span>
+            <span class="protocol-badge">Transition predictor</span>
+          </div>
+          <p class="protocol-note">
+            Review the three most likely next regimes and five historical analogs.
+            Feedback and follow-up memory belong to your session and may reset when the demo restarts.
+          </p>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Human-in-the-loop semantic forecasting</p>
+            <h2>KBOS Wind State Review</h2>
+          </div>
+          <div class="topbar-meta">
+            <span>Transition evidence</span>
+            <span>Historical analogs</span>
+            <span>Reviewer memory</span>
+          </div>
+        </header>
+
+        <section id="messages" class="messages" aria-live="polite"></section>
+
+        <form id="chatForm" class="composer">
+          <textarea
+            id="question"
+            rows="2"
+            placeholder="Ask: predict next phase, explain current live state, retrieve similar windows, accept, flag, or note this prediction"
+          ></textarea>
+          <button type="submit">Run</button>
+        </form>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
