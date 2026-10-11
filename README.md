@@ -11,8 +11,8 @@ license: mit
 
 # Wind Phase Review Lab
 
-An interactive research demo for inspecting wind-regime forecasts, retrieving
-similar historical observation windows, and recording human review feedback.
+An interactive research demo for inspecting wind-regime forecasts, exploring
+their evidence, and retrieving similar historical observation windows.
 The transition-count predictor produces the forecast. An optional language model
 explains the evidence; it does not change the forecast or retrain the predictor.
 
@@ -35,10 +35,10 @@ python -m venv .venv
 ```
 
 Open `http://127.0.0.1:7860`. No API key is required for forecasts, historical
-examples, deterministic explanations, or feedback. The initial screen identifies
-the data mode and observation timestamp. Start with **Predict Phase**, ask
-**Why This Phase?**, inspect **Similar Windows**, and then accept, flag or note
-the forecast. Action buttons fill the question box; press **Run** to submit.
+examples, deterministic explanations, or standard casual replies. The initial
+screen identifies the data mode and observation timestamp. Start with **Predict Phase**, ask
+**Why This Phase?**, or inspect **Similar Windows**. Action buttons fill the
+question box; press **Run** to submit. You can also say hello or thanks.
 
 The default `WIND_DATA_MODE=snapshot` uses observations ending on
 2026-06-11 at 05:54 UTC. It is an interactive demo of dated observations, not a
@@ -82,6 +82,8 @@ Hugging Face Docker Spaces and Render.
 
 ## Public demo behavior
 
+- Feedback controls and review-status panels are hidden from the demo interface.
+  The underlying research feedback API remains unchanged.
 - A separate, tool-free casual agent handles greetings, thanks and short social
   exchanges. It uses the configured LLM for free-form wording, with standard
   replies if the API is unavailable. Casual replies never alter forecast memory
@@ -105,6 +107,8 @@ Hugging Face Docker Spaces and Render.
 ```
 
 Tests use the bundled assets and never call the OpenAI API or live weather API.
+If Node.js is installed, also run `node --test tests/test_ui.js` to check the
+interface renderer without a browser. Node.js is not required to run the demo.
 Docker image execution and the optional authenticated LLM path must also be
 checked on the actual host before sharing a public demo link.
 
@@ -117,7 +121,8 @@ python deployment\build_package.py
 ## Screenshots
 
 After starting the app, capture forecast/evidence, historical examples, and
-feedback using Windows **Win + Shift + S**. Keep the data timestamp visible.
+casual conversation using Windows **Win + Shift + S**. Keep the data timestamp
+visible.
 Store the images under `docs/screenshots/` and add them to your main research
 repository README using [the suggested snippet](docs/SCREENSHOTS.md).
 

@@ -18,9 +18,9 @@ The interface shows the most likely next regimes and their historical support.
 ![Similar historical observation windows](docs/screenshots/historical-examples.png)
 Retrieved observation windows provide examples for inspecting the forecast.
 
-### Human review
-![Recorded review feedback](docs/screenshots/feedback.png)
-Operators can accept, flag or annotate a forecast without changing model weights.
+### Casual conversation
+![A casual reply to thanks](docs/screenshots/conversation.png)
+A separate casual agent responds to greetings and thanks without changing the forecast.
 ```
 
 Once hosting is verified, add `[Interactive demo](YOUR_VERIFIED_DEMO_URL)`.

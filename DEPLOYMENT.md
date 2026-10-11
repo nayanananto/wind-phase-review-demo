@@ -50,7 +50,11 @@ Open the app and send these questions in order:
 1. `predict next phase`
 2. `why was this phase selected?`
 3. `retrieve similar historical windows`
-4. `flag this prediction because support should be reviewed`
+4. `Thanks for the forecast`
+
+Confirm that the first three requests still show forecast evidence and historical
+examples, and that the last request returns a casual reply. The public interface
+does not show accept, flag, note or review-status controls.
 
 Open a separate private browser window and confirm that it starts a fresh
 session. Ensure the data timestamp is visible and optional LLM explanations

@@ -59,6 +59,21 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn("memory", followup["mode"])
         self.assertTrue(followup["answer"])
 
+    def test_public_ui_hides_feedback_controls_and_review_status(self):
+        page = self.client.get("/").text
+        for prompt in ("predict next phase", "explain current live state",
+                       "retrieve similar historical windows", "why was this phase selected?"):
+            self.assertIn(f'data-prompt="{prompt}"', page)
+        self.assertEqual(page.count("data-prompt="), 4)
+        for removed in ("Accept Forecast", "Flag Forecast", "Add Note",
+                        "record human review feedback", "Reviewer memory"):
+            self.assertNotIn(removed, page)
+        script = self.client.get("/static/app.js").text
+        self.assertNotIn("renderReviewState", script)
+        self.assertNotIn("Human Review State", script)
+        self.assertNotIn("accept, flag or note", script)
+        self.assertIn('s.mode === "casual_conversation"', script)
+
     def test_real_historical_retrieval(self):
         result = self.ask("retrieve similar historical windows")
         self.assertTrue(result["similar_windows"])

@@ -68,22 +68,6 @@ function renderRows(title, rows, type) {
   return `<div class="section"><h3>${esc(title)}</h3><div class="rows">${body}</div></div>`;
 }
 
-function renderReviewState(reviewState) {
-  if (!reviewState) return "";
-  const meta = [
-    pill(`status: ${reviewState.status || reviewState.action || "n/a"}`, "strong"),
-    reviewState.window_id ? pill(`forecast input window: ${reviewState.window_id}`) : null,
-    reviewState.model_predicted_token !== null && reviewState.model_predicted_token !== undefined
-      ? pill(`model next token: ${reviewState.model_predicted_token}`)
-      : null,
-  ].filter(Boolean).join("");
-
-  return `<div class="section">
-    <h3>Human Review State</h3>
-    <div class="meta">${meta}</div>
-  </div>`;
-}
-
 function renderMemoryDebug(debug) {
   if (!debug) return "";
   const chunks = (debug.selected_chunk_ids || []).join(", ");
@@ -162,7 +146,6 @@ function renderResponse(payload) {
     ${renderRows("Phase candidates", s.top_phase_candidates, "candidate")}
     ${renderRows("Similar historical windows", s.similar_windows, "similar")}
     ${renderRows("Transition analogs", s.transition_analogs, "analog")}
-    ${renderReviewState(s.review_state)}
     ${renderMemoryDebug(s.memory_rag_debug)}
     ${renderTechnicalDetails(s)}
   `;
@@ -246,7 +229,7 @@ async function init() {
   const syncMessage = sync.message ? `<div class="meta">${pill(sync.message)}</div>` : "";
   addMessage("assistant", `
     <div class="meta">${pill("workflow ready", "strong")}${pill(defaults.llm_enabled_by_default ? "LLM explanations enabled" : "Deterministic explanations")}${pill("Session memory on")}${pill(modeText)}</div>
-    <div class="answer">Start with Predict Phase, inspect similar historical windows, then accept, flag or note the forecast. Follow-up questions use evidence from your session.</div>
+    <div class="answer">Start with Predict Phase, ask Why This Phase?, or explore Similar Windows. Follow-up questions use evidence from your session. You can also say hello or thanks.</div>
     ${syncMessage}
   `);
 }

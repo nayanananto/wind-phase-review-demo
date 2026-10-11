@@ -18,8 +18,8 @@
             </div>
           </div>
           <p class="hero-copy">
-            Inspect compressed wind states, forecast semantic phases, retrieve historical analogs,
-            and record human review feedback.
+            Inspect compressed wind states, forecast semantic phases, and explore
+            the evidence from similar historical windows.
           </p>
           <div id="metadataStatus" class="status-chip">Loading live context...</div>
         </section>
@@ -31,9 +31,6 @@
             <button data-prompt="explain current live state">Explain State</button>
             <button data-prompt="retrieve similar historical windows">Similar Windows</button>
             <button data-prompt="why was this phase selected?">Why This Phase?</button>
-            <button data-prompt="accept this prediction">Accept Forecast</button>
-            <button data-prompt="flag this prediction because support should be reviewed">Flag Forecast</button>
-            <button data-prompt="note this forecast for later review">Add Note</button>
           </div>
         </section>
 
@@ -47,7 +44,7 @@
           </div>
           <p class="protocol-note">
             Review the three most likely next regimes and five historical analogs.
-            Feedback and follow-up memory belong to your session and may reset when the demo restarts.
+            Follow-up memory belongs to your session and may reset when the demo restarts.
           </p>
         </section>
       </aside>
@@ -61,7 +58,7 @@
           <div class="topbar-meta">
             <span>Transition evidence</span>
             <span>Historical analogs</span>
-            <span>Reviewer memory</span>
+            <span>Session memory</span>
           </div>
         </header>
 
@@ -71,7 +68,7 @@
           <textarea
             id="question"
             rows="2"
-            placeholder="Ask: predict next phase, explain current live state, retrieve similar windows, accept, flag, or note this prediction"
+            placeholder="Ask about the next phase, the wind state, similar historical windows, or the forecast evidence"
           ></textarea>
           <button type="submit">Run</button>
         </form>
