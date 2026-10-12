@@ -132,6 +132,22 @@ async function loadUi({ reducedMotion = false, llmEnabled = true, request } = {}
 
 test("simplified page offers one suggestion near composer, not action/protocol panels", async () => {
   assert.doesNotMatch(html, /<aside\b|Core Actions|Active Protocol|topbar-meta|data-prompt=/);
+  const cssUrl = html.match(/<link\b[^>]*href="(\/static\/styles\.css[^\"]*)"/)?.[1];
+  const jsUrl = html.match(/<script\b[^>]*src="(\/static\/app\.js[^\"]*)"/)?.[1];
+  assert.ok(cssUrl && jsUrl, "both UI assets must be referenced");
+  const cssVersion = new URL(cssUrl, "http://ui.test").searchParams.get("v");
+  const jsVersion = new URL(jsUrl, "http://ui.test").searchParams.get("v");
+  assert.ok(cssVersion?.trim(), "CSS needs a nonempty cache-busting version");
+  assert.equal(jsVersion, cssVersion, "CSS and JS must share one UI version");
+  assert.doesNotMatch(html, /(?:href="\/static\/styles\.css"|src="\/static\/app\.js")/);
+  const icons = [...html.matchAll(/<svg\b([^>]*)>/g)];
+  assert.equal(icons.length, 4);
+  for (const [, attributes] of icons) {
+    for (const dimension of ["width", "height"]) {
+      const value = attributes.match(new RegExp(`\\b${dimension}="(\\d+(?:\\.\\d+)?)"`))?.[1];
+      assert.ok(value && Number(value) > 0, `SVG needs a positive intrinsic ${dimension}`);
+    }
+  }
   const button = html.match(/<button\b[^>]*\bid="promptSuggestion"[^>]*>/)?.[0];
   assert.ok(button);
   assert.match(button, /\btype="button"/);

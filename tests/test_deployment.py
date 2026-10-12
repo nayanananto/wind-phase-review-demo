@@ -1,6 +1,7 @@
 """Deployment checks against the real bundled assets; no external API calls."""
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -61,6 +62,30 @@ class DeploymentTests(unittest.TestCase):
 
     def test_public_ui_hides_feedback_controls_and_review_status(self):
         page = self.client.get("/").text
+        css_url = re.search(r'<link\b[^>]*href="(/static/styles\.css[^\"]*)"', page).group(1)
+        js_url = re.search(r'<script\b[^>]*src="(/static/app\.js[^\"]*)"', page).group(1)
+        css_version = re.search(r'[?&]v=([^&\s]+)', css_url)
+        js_version = re.search(r'[?&]v=([^&\s]+)', js_url)
+        self.assertIsNotNone(css_version)
+        self.assertIsNotNone(js_version)
+        self.assertEqual(css_version.group(1), js_version.group(1))
+        self.assertNotIn('href="/static/styles.css"', page)
+        self.assertNotIn('src="/static/app.js"', page)
+        for versioned_url, plain_url in ((css_url, "/static/styles.css"),
+                                         (js_url, "/static/app.js")):
+            versioned = self.client.get(versioned_url)
+            plain = self.client.get(plain_url)
+            self.assertEqual(versioned.status_code, 200)
+            self.assertEqual(plain.status_code, 200)
+            self.assertEqual(versioned.content, plain.content)
+            self.assertEqual(versioned.headers["content-type"], plain.headers["content-type"])
+        icons = re.findall(r'<svg\b([^>]*)>', page)
+        self.assertEqual(len(icons), 4)
+        for attributes in icons:
+            for dimension in ("width", "height"):
+                value = re.search(rf'\b{dimension}="(\d+(?:\.\d+)?)"', attributes)
+                self.assertIsNotNone(value)
+                self.assertGreater(float(value.group(1)), 0)
         for element_id in ("metadataStatus", "llmStatus", "messages", "chatForm",
                            "question", "promptSuggestion", "promptSuggestionText",
                            "pauseSuggestions", "sendButton", "welcomeState"):
