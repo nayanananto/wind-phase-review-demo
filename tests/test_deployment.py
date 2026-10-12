@@ -60,6 +60,30 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn("memory", followup["mode"])
         self.assertTrue(followup["answer"])
 
+    def test_new_suggestion_followups_keep_existing_memory_route(self):
+        from app.hitl.controlled_agent_graph import ControlledHITLAgentGraph
+        from deployment.casual_agent import classify_casual_message, is_unsupported_request
+
+        graph = object.__new__(ControlledHITLAgentGraph)
+        memory = {"last_tool_result": {"mode": "phase_forecast"}}
+        for question in (
+            "Which retrieved historical window is most similar to the current window?",
+            "Why was this phase selected instead of the other candidate phases?",
+            "Explain the previous answer in simple language without technical terms.",
+            "Explain the previous answer more briefly in two or three sentences.",
+            "Explain the previous answer in Bengali using simple language.",
+        ):
+            with self.subTest(question=question):
+                self.assertFalse(is_unsupported_request(question))
+                self.assertIsNone(classify_casual_message(question))
+                rewritten = graph._rewrite_request({
+                    "question": question, "memory": memory, "trace": [],
+                })
+                self.assertEqual(rewritten["route"], "memory_followup")
+                self.assertEqual(rewritten["execution_mode"], "memory_only")
+                self.assertEqual(rewritten["question"], question)
+        self.assertEqual(memory, {"last_tool_result": {"mode": "phase_forecast"}})
+
     def test_public_ui_hides_feedback_controls_and_review_status(self):
         page = self.client.get("/").text
         css_url = re.search(r'<link\b[^>]*href="(/static/styles\.css[^\"]*)"', page).group(1)

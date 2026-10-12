@@ -7,6 +7,11 @@ const PROMPT_SUGGESTIONS = [
   { text: "Explain the current wind state", prompt: "explain current live state" },
   { text: "Find similar historical windows", prompt: "retrieve similar historical windows" },
   { text: "After a forecast: why was this phase selected?", prompt: "why was this phase selected?" },
+  { text: "Which past window is closest?", prompt: "Which retrieved historical window is most similar to the current window?" },
+  { text: "Why this phase, not the alternatives?", prompt: "Why was this phase selected instead of the other candidate phases?" },
+  { text: "Explain it simply, without technical terms", prompt: "Explain the previous answer in simple language without technical terms." },
+  { text: "Give me a shorter explanation", prompt: "Explain the previous answer more briefly in two or three sentences." },
+  { text: "Explain it in Bengali", prompt: "Explain the previous answer in Bengali using simple language." },
 ];
 
 function esc(value) {
@@ -169,12 +174,12 @@ function startPromptSuggestions() {
   const input = $("question");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   let index = 0;
-  let hovered = false;
   let manuallyPaused = false;
   let fadeTimer = null;
 
-  const isPaused = () => manuallyPaused || hovered || document.hidden || isSending
-    || document.activeElement === button || document.activeElement === input;
+  // Rotating examples are independent of the input draft and request state.
+  // Only an explicit pause or an off-screen tab stops rotation.
+  const isPaused = () => manuallyPaused || document.hidden;
   const render = () => {
     const suggestion = PROMPT_SUGGESTIONS[index];
     label.textContent = suggestion.text;
@@ -196,8 +201,7 @@ function startPromptSuggestions() {
     input.value = PROMPT_SUGGESTIONS[index].prompt;
     input.focus();
   });
-  button.addEventListener("mouseenter", () => { hovered = true; cancelFade(); });
-  button.addEventListener("mouseleave", () => { hovered = false; });
+  button.addEventListener("pointerdown", cancelFade);
   button.addEventListener("focus", cancelFade);
   input.addEventListener("focus", cancelFade);
   document.addEventListener("visibilitychange", () => { if (document.hidden) cancelFade(); });

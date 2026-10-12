@@ -11,7 +11,12 @@ const html = fs.readFileSync(path.join(staticDir, "index.html"), "utf8");
 const source = fs.readFileSync(path.join(staticDir, "app.js"), "utf8");
 const css = fs.readFileSync(path.join(staticDir, "styles.css"), "utf8");
 const EXPECTED_PROMPTS = ["predict next phase", "explain current live state",
-  "retrieve similar historical windows", "why was this phase selected?"];
+  "retrieve similar historical windows", "why was this phase selected?",
+  "Which retrieved historical window is most similar to the current window?",
+  "Why was this phase selected instead of the other candidate phases?",
+  "Explain the previous answer in simple language without technical terms.",
+  "Explain the previous answer more briefly in two or three sentences.",
+  "Explain the previous answer in Bengali using simple language."];
 
 function element() {
   const attributes = new Map();
@@ -176,12 +181,13 @@ test("static welcome stays uncluttered while snapshot and LLM status are accurat
   assert.equal(disabled.nodes.get("llmStatus").textContent, "Deterministic explanations");
 });
 
-test("suggestions fade through four prompts without modifying input or sending", async () => {
+test("suggestions fade through all nine prompts without modifying a focused draft or sending", async () => {
   const { nodes, clock, fetched } = await loadUi();
   const button = nodes.get("promptSuggestion");
   const label = nodes.get("promptSuggestionText");
   const input = nodes.get("question");
   input.value = "An unfinished question";
+  input.focus();
   assert.equal(button.dataset.prompt, EXPECTED_PROMPTS[0]);
   assert.equal(clock.intervals.size, 1);
   assert.equal([...clock.intervals.values()][0].delay, 4800);
@@ -208,29 +214,68 @@ test("clicking current suggestion fills/focuses input but never submits", async 
   assert.equal(nodes.get("chatForm").submitRequests, 0);
   assert.equal(fetched.length, 1);
   assert.equal(nodes.get("messages").children.length, 1);
+  clock.tick(); clock.finishFade();
+  assert.equal(nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[2]);
+  assert.equal(nodes.get("question").value, EXPECTED_PROMPTS[1]);
 });
 
-test("hover, focus and hidden tabs pause rotation and cancel pending fades", async () => {
+test("every example including brief, simple and Bengali fills only its own prompt", async () => {
+  const { nodes, clock, fetched } = await loadUi();
+  const button = nodes.get("promptSuggestion");
+  const input = nodes.get("question");
+  for (const prompt of EXPECTED_PROMPTS) {
+    assert.equal(button.dataset.prompt, prompt);
+    await emit(button, "click");
+    assert.equal(input.value, prompt);
+    clock.tick(); clock.finishFade();
+    assert.equal(input.value, prompt);
+  }
+  assert.equal(nodes.get("chatForm").submitRequests, 0);
+  assert.equal(fetched.length, 1);
+  assert.equal(nodes.get("messages").children.length, 1);
+});
+
+test("hover and keyboard focus do not stop suggestions or overwrite the draft", async () => {
+  const { nodes, clock } = await loadUi();
+  const button = nodes.get("promptSuggestion");
+  const input = nodes.get("question");
+  input.value = "Keep this draft";
+  await emit(button, "mouseenter");
+  button.focus();
+  clock.tick(); clock.finishFade();
+  assert.equal(button.dataset.prompt, EXPECTED_PROMPTS[1]);
+  input.focus();
+  clock.tick(); clock.finishFade();
+  assert.equal(button.dataset.prompt, EXPECTED_PROMPTS[2]);
+  assert.equal(input.value, "Keep this draft");
+});
+
+test("pressing a suggestion cancels an in-flight fade without stopping later rotation", async () => {
+  const { nodes, clock, fetched } = await loadUi();
+  const button = nodes.get("promptSuggestion");
+  clock.tick();
+  assert.equal(clock.timeouts.size, 1);
+  await emit(button, "pointerdown");
+  assert.equal(clock.timeouts.size, 0);
+  await emit(button, "click");
+  assert.equal(nodes.get("question").value, EXPECTED_PROMPTS[0]);
+  clock.tick(); clock.finishFade();
+  assert.equal(button.dataset.prompt, EXPECTED_PROMPTS[1]);
+  assert.equal(nodes.get("question").value, EXPECTED_PROMPTS[0]);
+  assert.equal(fetched.length, 1);
+});
+
+test("hidden tabs pause rotation and cancel pending fades, then resume when visible", async () => {
   const { nodes, document, clock } = await loadUi();
   const button = nodes.get("promptSuggestion");
   const label = nodes.get("promptSuggestionText");
   const initial = button.dataset.prompt;
   clock.tick();
   assert.equal(clock.timeouts.size, 1);
-  await emit(button, "mouseenter");
-  assert.equal(clock.timeouts.size, 0);
-  assert.ok(!label.classList.contains("is-changing"));
-  clock.tick(); clock.finishFade();
-  assert.equal(button.dataset.prompt, initial);
-  await emit(button, "mouseleave");
-  for (const focused of [button, nodes.get("question")]) {
-    focused.focus(); clock.tick(); clock.finishFade();
-    assert.equal(button.dataset.prompt, initial);
-  }
-  document.activeElement = null;
-  clock.tick(); document.hidden = true;
+  document.hidden = true;
   await emit(document, "visibilitychange");
   assert.equal(clock.timeouts.size, 0);
+  assert.ok(!label.classList.contains("is-changing"));
   clock.tick(); clock.finishFade();
   assert.equal(button.dataset.prompt, initial);
   document.hidden = false;
@@ -318,10 +363,10 @@ test("casual replies remain isolated, label LLM use and escape generated text", 
   } }), /standard reply/);
 });
 
-test("sending pauses suggestions, preserves next draft and prevents duplicate submits", async () => {
+test("suggestions keep rotating while sending, preserve next draft and prevent duplicate submits", async () => {
   let release;
   const ui = await loadUi({ request: () => new Promise((resolve) => { release = resolve; }) });
-  const { nodes, document, clock, fetched } = ui;
+  const { nodes, clock, fetched } = ui;
   const form = nodes.get("chatForm");
   nodes.get("question").value = "  predict next phase  ";
   const submitting = emit(form, "submit");
@@ -333,18 +378,20 @@ test("sending pauses suggestions, preserves next draft and prevents duplicate su
   assert.equal(nodes.has("welcomeState"), false);
   assert.equal(nodes.get("messages").children.length, 2);
   nodes.get("question").value = "another question";
+  nodes.get("question").focus();
   await emit(form, "submit");
   assert.equal(fetched.length, 2);
   assert.equal(nodes.get("question").value, "another question");
-  document.activeElement = null;
   clock.tick(); clock.finishFade();
-  assert.equal(nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[0]);
+  assert.equal(nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[1]);
+  assert.equal(nodes.get("question").value, "another question");
   release({ ok: true, json: async () => ({ summary: { mode: "casual_conversation", answer: "Hello!" } }) });
   await submitting;
   assert.equal(nodes.get("sendButton").disabled, false);
   assert.equal(form.getAttribute("aria-busy"), "false");
   clock.tick(); clock.finishFade();
-  assert.equal(nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[1]);
+  assert.equal(nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[2]);
+  assert.equal(nodes.get("question").value, "another question");
 });
 
 test("HTTP/network failures restore sending, user HTML is escaped, Enter handles Shift/IME", async () => {
