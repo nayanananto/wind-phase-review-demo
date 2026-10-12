@@ -61,14 +61,24 @@ class DeploymentTests(unittest.TestCase):
 
     def test_public_ui_hides_feedback_controls_and_review_status(self):
         page = self.client.get("/").text
-        for prompt in ("predict next phase", "explain current live state",
-                       "retrieve similar historical windows", "why was this phase selected?"):
-            self.assertIn(f'data-prompt="{prompt}"', page)
-        self.assertEqual(page.count("data-prompt="), 4)
+        for element_id in ("metadataStatus", "llmStatus", "messages", "chatForm",
+                           "question", "promptSuggestion", "promptSuggestionText",
+                           "pauseSuggestions", "sendButton", "welcomeState"):
+            self.assertIn(f'id="{element_id}"', page)
+        self.assertEqual(page.count('id="promptSuggestion"'), 1)
+        self.assertNotIn("data-prompt=", page)
+        self.assertNotIn("<aside", page)
         for removed in ("Accept Forecast", "Flag Forecast", "Add Note",
-                        "record human review feedback", "Reviewer memory"):
+                        "record human review feedback", "Reviewer memory",
+                        "Core Actions", "Active Protocol", "topbar-meta"):
             self.assertNotIn(removed, page)
         script = self.client.get("/static/app.js").text
+        for prompt in ("predict next phase", "explain current live state",
+                       "retrieve similar historical windows", "why was this phase selected?"):
+            self.assertIn(f'prompt: "{prompt}"', script)
+        self.assertIn("PROMPT_SUGGESTIONS", script)
+        self.assertIn("startPromptSuggestions", script)
+        self.assertIn("prefers-reduced-motion", script)
         self.assertNotIn("renderReviewState", script)
         self.assertNotIn("Human Review State", script)
         self.assertNotIn("accept, flag or note", script)

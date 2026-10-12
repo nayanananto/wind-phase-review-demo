@@ -36,9 +36,11 @@ python -m venv .venv
 
 Open `http://127.0.0.1:7860`. No API key is required for forecasts, historical
 examples, deterministic explanations, or standard casual replies. The initial
-screen identifies the data mode and observation timestamp. Start with **Predict Phase**, ask
-**Why This Phase?**, or inspect **Similar Windows**. Action buttons fill the
-question box; press **Run** to submit. You can also say hello or thanks.
+screen identifies the data mode and observation timestamp. Rotating examples
+above the question box suggest a forecast, a state explanation, historical
+matches, and a forecast follow-up. Click an example to fill the box, then press
+**Enter** or the send arrow to submit. Examples pause while you type or focus on
+them; the pause icon also stops rotation. You can also say hello or thanks.
 
 The default `WIND_DATA_MODE=snapshot` uses observations ending on
 2026-06-11 at 05:54 UTC. It is an interactive demo of dated observations, not a
@@ -82,6 +84,10 @@ Hugging Face Docker Spaces and Render.
 
 ## Public demo behavior
 
+- Route, input-window and LLM availability labels remain visible in each
+  scientific response. Open **Run details** for transition analogs, input tokens
+  and memory/LLM diagnostics. Forecast candidates and historical matches stay
+  in the main response.
 - Feedback controls and review-status panels are hidden from the demo interface.
   The underlying research feedback API remains unchanged.
 - A separate, tool-free casual agent handles greetings, thanks and short social
