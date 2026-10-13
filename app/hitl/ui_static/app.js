@@ -3,16 +3,114 @@ const messages = $("messages");
 let isSending = false;
 
 const PROMPT_SUGGESTIONS = [
-  { text: "Predict the next wind phase", prompt: "predict next phase" },
-  { text: "Explain the current wind state", prompt: "explain current live state" },
-  { text: "Find similar historical windows", prompt: "retrieve similar historical windows" },
-  { text: "After a forecast: why was this phase selected?", prompt: "why was this phase selected?" },
-  { text: "Which past window is closest?", prompt: "Which retrieved historical window is most similar to the current window?" },
-  { text: "Why this phase, not the alternatives?", prompt: "Why was this phase selected instead of the other candidate phases?" },
-  { text: "Explain it simply, without technical terms", prompt: "Explain the previous answer in simple language without technical terms." },
-  { text: "Give me a shorter explanation", prompt: "Explain the previous answer more briefly in two or three sentences." },
-  { text: "Explain it in Bengali", prompt: "Explain the previous answer in Bengali using simple language." },
+  { id: "predict_phase", needs: "start", text: "Predict the next wind phase", prompt: "predict next phase" },
+  { id: "explain_state", needs: "start", text: "Explain the current wind state", prompt: "explain current live state" },
+  { id: "retrieve_history", needs: "start", text: "Find similar historical windows", prompt: "retrieve similar historical windows" },
+  { id: "why_phase", needs: "forecast", text: "After a forecast: why was this phase selected?", prompt: "why was this phase selected?" },
+  { id: "closest_window", needs: "history", text: "Which past window is closest?", prompt: "Which retrieved historical window is most similar to the current window?" },
+  { id: "alternative_phases", needs: "forecast", text: "Why this phase, not the alternatives?", prompt: "Why was this phase selected instead of the other candidate phases?" },
+  { id: "explain_simply", needs: "answer", text: "Explain it simply, without technical terms", prompt: "Explain the previous answer in simple language without technical terms." },
+  { id: "explain_briefly", needs: "answer", text: "Give me a shorter explanation", prompt: "Explain the previous answer more briefly in two or three sentences." },
+  { id: "explain_bengali", needs: "answer", text: "Explain it in Bengali", prompt: "Explain the previous answer in Bengali using simple language." },
 ];
+
+// This progress belongs to the visible conversation, not shared browser storage.
+const suggestionProgress = {
+  hasForecast: false,
+  hasAlternatives: false,
+  hasHistory: false,
+  canClarify: false,
+  lastTopic: null,
+  threadId: null,
+  completed: new Set(),
+};
+let refreshPromptSuggestions = () => {};
+
+function resetSuggestionProgress(threadId = suggestionProgress.threadId) {
+  suggestionProgress.hasForecast = false;
+  suggestionProgress.hasAlternatives = false;
+  suggestionProgress.hasHistory = false;
+  suggestionProgress.canClarify = false;
+  suggestionProgress.lastTopic = null;
+  suggestionProgress.threadId = threadId;
+  suggestionProgress.completed.clear();
+}
+
+function suggestionIsReady(suggestion) {
+  return suggestion.needs === "start"
+    || (suggestion.needs === "forecast" && suggestionProgress.hasForecast
+      && (suggestion.id !== "alternative_phases" || suggestionProgress.hasAlternatives))
+    || (suggestion.needs === "history" && suggestionProgress.hasHistory)
+    || (suggestion.needs === "answer" && suggestionProgress.canClarify);
+}
+
+function getPromptSuggestions() {
+  const unused = PROMPT_SUGGESTIONS.filter((suggestion) => suggestionIsReady(suggestion)
+    && !suggestionProgress.completed.has(suggestion.id));
+  // Keep the carousel useful after all eligible questions have been explored.
+  if (!unused.length) return PROMPT_SUGGESTIONS.filter((suggestion) => suggestion.needs === "start");
+  const preferred = ["forecast", "history"].includes(suggestionProgress.lastTopic)
+    ? suggestionProgress.lastTopic : "answer";
+  const priority = (suggestion) => suggestion.needs === preferred ? 0
+    : suggestion.needs === "answer" ? 1 : suggestion.needs === "start" ? 3 : 2;
+  return unused.sort((a, b) => priority(a) - priority(b));
+}
+
+function updateSuggestionProgress(question, payload) {
+  const previousPool = getPromptSuggestions().map((suggestion) => suggestion.id).join(",");
+  const s = payload?.summary || {};
+  const newThread = s.thread_id && suggestionProgress.threadId && s.thread_id !== suggestionProgress.threadId;
+  if (newThread) {
+    resetSuggestionProgress(s.thread_id);
+  }
+  if (s.thread_id) suggestionProgress.threadId = s.thread_id;
+  if (s.mode === "memory_rag_missing_context") {
+    resetSuggestionProgress();
+    refreshPromptSuggestions();
+    return;
+  }
+
+  const route = s.agent_graph?.route || s.intent;
+  const hasAnswer = typeof s.answer === "string" && s.answer.trim().length > 0;
+  const blocked = s.mode === "casual_conversation" || s.mode === "out_of_scope"
+    || route === "out_of_scope" || s.error || String(s.mode || "").endsWith("error");
+  const forecast = !blocked && route === "phase_prediction"
+    && Array.isArray(s.top_phase_candidates) && s.top_phase_candidates.length > 0;
+  const history = !blocked && route === "retrieve_similar"
+    && Array.isArray(s.similar_windows) && s.similar_windows.length > 0;
+  const state = !blocked && route === "explain_state" && hasAnswer;
+  const followup = !blocked && hasAnswer && (route === "memory_followup"
+    || ["memory_rag_followup", "llm_memory_rag_followup"].includes(s.mode));
+  suggestionProgress.canClarify = Boolean(forecast || history || state || followup);
+
+  if (forecast || history || state) {
+    const topic = forecast ? "forecast" : history ? "history" : "state";
+    suggestionProgress.lastTopic = topic;
+    // A fresh core result makes its own follow-up questions useful again.
+    for (const suggestion of PROMPT_SUGGESTIONS) {
+      if (suggestion.needs === topic || suggestion.needs === "answer") {
+        suggestionProgress.completed.delete(suggestion.id);
+      }
+    }
+    const actionId = forecast ? "predict_phase" : history ? "retrieve_history" : "explain_state";
+    suggestionProgress.completed.add(actionId);
+    if (forecast) {
+      suggestionProgress.hasForecast = true;
+      suggestionProgress.hasAlternatives = s.top_phase_candidates.length > 1;
+    }
+    if (history) suggestionProgress.hasHistory = true;
+  }
+
+  if (suggestionProgress.canClarify) {
+    const normalize = (text) => String(text || "").trim().toLowerCase()
+      .replace(/\s+/g, " ").replace(/[.!?]+$/, "");
+    const asked = PROMPT_SUGGESTIONS.find((suggestion) => suggestion.needs !== "start"
+      && normalize(suggestion.prompt) === normalize(question));
+    if (asked && suggestionIsReady(asked)) suggestionProgress.completed.add(asked.id);
+  }
+  const nextPool = getPromptSuggestions().map((suggestion) => suggestion.id).join(",");
+  if (newThread || forecast || history || state || previousPool !== nextPool) refreshPromptSuggestions();
+}
 
 function esc(value) {
   const normalized = value && typeof value === "object"
@@ -154,11 +252,15 @@ async function send(question) {
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
       pending.innerHTML = `<div class="answer error">${esc(err.detail || response.statusText)}</div>`;
+      updateSuggestionProgress(question, null);
       return;
     }
-    pending.innerHTML = renderResponse(await response.json());
+    const payload = await response.json();
+    pending.innerHTML = renderResponse(payload);
+    updateSuggestionProgress(question, payload);
   } catch {
     pending.innerHTML = `<div class="answer error">Could not reach the demo. Please try again.</div>`;
+    updateSuggestionProgress(question, null);
   } finally {
     isSending = false;
     $("sendButton").disabled = false;
@@ -173,6 +275,7 @@ function startPromptSuggestions() {
   const pauseButton = $("pauseSuggestions");
   const input = $("question");
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  let suggestions = getPromptSuggestions();
   let index = 0;
   let manuallyPaused = false;
   let fadeTimer = null;
@@ -181,7 +284,7 @@ function startPromptSuggestions() {
   // Only an explicit pause or an off-screen tab stops rotation.
   const isPaused = () => manuallyPaused || document.hidden;
   const render = () => {
-    const suggestion = PROMPT_SUGGESTIONS[index];
+    const suggestion = suggestions[index];
     label.textContent = suggestion.text;
     button.dataset.prompt = suggestion.prompt;
     button.title = `Use example: ${suggestion.prompt}`;
@@ -192,13 +295,19 @@ function startPromptSuggestions() {
     label.classList.remove("is-changing");
   };
   const advance = () => {
-    index = (index + 1) % PROMPT_SUGGESTIONS.length;
+    index = (index + 1) % suggestions.length;
+    render();
+  };
+  refreshPromptSuggestions = () => {
+    cancelFade();
+    suggestions = getPromptSuggestions();
+    index = 0;
     render();
   };
 
   button.addEventListener("click", () => {
     cancelFade();
-    input.value = PROMPT_SUGGESTIONS[index].prompt;
+    input.value = suggestions[index].prompt;
     input.focus();
   });
   button.addEventListener("pointerdown", cancelFade);

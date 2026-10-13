@@ -17,6 +17,32 @@ const EXPECTED_PROMPTS = ["predict next phase", "explain current live state",
   "Explain the previous answer in simple language without technical terms.",
   "Explain the previous answer more briefly in two or three sentences.",
   "Explain the previous answer in Bengali using simple language."];
+const STARTER_PROMPTS = EXPECTED_PROMPTS.slice(0, 3);
+
+const forecastResponse = (thread = "session-one") => ({ summary: {
+  intent: "phase_prediction", mode: "deterministic_live_phase_prediction",
+  agent_graph: { route: "phase_prediction" }, thread_id: thread,
+  answer: "The stored transitions favor this phase.",
+  top_phase_candidates: [
+    { token_id: 0, regime_name: "SteadyModerate", probability: 0.889, count: 72 },
+    { token_id: 7, regime_name: "LightSteady", probability: 0.111, count: 9 },
+  ],
+} });
+const historyResponse = (thread = "session-one") => ({ summary: {
+  intent: "retrieve_similar", mode: "retrieve_similar", agent_graph: { route: "retrieve_similar" },
+  thread_id: thread, answer: "Retrieved similar historical windows.",
+  similar_windows: [{ window_id: "historical-example", retrieval_distance: 0.1427 }],
+} });
+const stateResponse = (thread = "session-one") => ({ summary: {
+  intent: "explain_state", mode: "explain_window", agent_graph: { route: "explain_state" },
+  thread_id: thread, answer: "The current wind state is steady.",
+} });
+const followupResponse = () => ({ summary: {
+  mode: "memory_rag_followup", agent_graph: { route: "memory_followup" },
+  thread_id: "session-one", answer: "An explanation based on the previous evidence.",
+} });
+const availablePrompts = (ui) => JSON.parse(vm.runInContext(
+  "JSON.stringify(getPromptSuggestions().map(item => item.prompt))", ui.context));
 
 function element() {
   const attributes = new Map();
@@ -181,7 +207,7 @@ test("static welcome stays uncluttered while snapshot and LLM status are accurat
   assert.equal(disabled.nodes.get("llmStatus").textContent, "Deterministic explanations");
 });
 
-test("suggestions fade through all nine prompts without modifying a focused draft or sending", async () => {
+test("startup rotates only three starting actions without modifying a focused draft or sending", async () => {
   const { nodes, clock, fetched } = await loadUi();
   const button = nodes.get("promptSuggestion");
   const label = nodes.get("promptSuggestionText");
@@ -191,14 +217,14 @@ test("suggestions fade through all nine prompts without modifying a focused draf
   assert.equal(button.dataset.prompt, EXPECTED_PROMPTS[0]);
   assert.equal(clock.intervals.size, 1);
   assert.equal([...clock.intervals.values()][0].delay, 4800);
-  for (let index = 1; index <= EXPECTED_PROMPTS.length; index += 1) {
+  for (let index = 1; index <= STARTER_PROMPTS.length * 2; index += 1) {
     const previous = button.dataset.prompt;
     clock.tick();
     assert.equal(button.dataset.prompt, previous);
     assert.ok(label.classList.contains("is-changing"));
     assert.equal([...clock.timeouts.values()][0].delay, 180);
     clock.finishFade();
-    assert.equal(button.dataset.prompt, EXPECTED_PROMPTS[index % EXPECTED_PROMPTS.length]);
+    assert.equal(button.dataset.prompt, STARTER_PROMPTS[index % STARTER_PROMPTS.length]);
     assert.ok(!label.classList.contains("is-changing"));
     assert.equal(input.value, "An unfinished question");
   }
@@ -219,11 +245,17 @@ test("clicking current suggestion fills/focuses input but never submits", async 
   assert.equal(nodes.get("question").value, EXPECTED_PROMPTS[1]);
 });
 
-test("every example including brief, simple and Bengali fills only its own prompt", async () => {
-  const { nodes, clock, fetched } = await loadUi();
+test("every unlocked follow-up fills only its own prompt without submitting or stopping rotation", async () => {
+  const ui = await loadUi();
+  const { nodes, clock, fetched, context } = ui;
+  context.updateSuggestionProgress(EXPECTED_PROMPTS[0], forecastResponse());
+  context.updateSuggestionProgress(EXPECTED_PROMPTS[1], stateResponse());
+  context.updateSuggestionProgress(EXPECTED_PROMPTS[2], historyResponse());
+  const pool = availablePrompts(ui);
+  assert.equal(pool.length, 6);
   const button = nodes.get("promptSuggestion");
   const input = nodes.get("question");
-  for (const prompt of EXPECTED_PROMPTS) {
+  for (const prompt of pool) {
     assert.equal(button.dataset.prompt, prompt);
     await emit(button, "click");
     assert.equal(input.value, prompt);
@@ -233,6 +265,140 @@ test("every example including brief, simple and Bengali fills only its own promp
   assert.equal(nodes.get("chatForm").submitRequests, 0);
   assert.equal(fetched.length, 1);
   assert.equal(nodes.get("messages").children.length, 1);
+});
+
+test("successful forecast unlocks why/alternatives first but not historical comparison", async () => {
+  const ui = await loadUi();
+  assert.deepEqual(availablePrompts(ui), STARTER_PROMPTS);
+  await emit(ui.nodes.get("promptSuggestion"), "click");
+  assert.deepEqual(availablePrompts(ui), STARTER_PROMPTS);
+  ui.context.updateSuggestionProgress("Forecast the next wind regime", forecastResponse());
+  assert.deepEqual(availablePrompts(ui), [EXPECTED_PROMPTS[3], EXPECTED_PROMPTS[5],
+    ...EXPECTED_PROMPTS.slice(6), EXPECTED_PROMPTS[1], EXPECTED_PROMPTS[2]]);
+  assert.equal(ui.nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[3]);
+});
+
+test("history retrieval unlocks closest-window first without unlocking phase questions", async () => {
+  const ui = await loadUi();
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[2], historyResponse());
+  assert.deepEqual(availablePrompts(ui), [EXPECTED_PROMPTS[4], ...EXPECTED_PROMPTS.slice(6),
+    EXPECTED_PROMPTS[0], EXPECTED_PROMPTS[1]]);
+  assert.equal(ui.nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[4]);
+});
+
+test("alternative comparisons require more than one returned phase candidate", async () => {
+  const ui = await loadUi();
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[0], forecastResponse());
+  assert.ok(availablePrompts(ui).includes(EXPECTED_PROMPTS[5]));
+  const singleCandidate = forecastResponse();
+  singleCandidate.summary.top_phase_candidates = singleCandidate.summary.top_phase_candidates.slice(0, 1);
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[0], singleCandidate);
+  assert.ok(availablePrompts(ui).includes(EXPECTED_PROMPTS[3]));
+  assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[5]));
+});
+
+test("state explanation unlocks only answer-style follow-ups and remaining starting actions", async () => {
+  const ui = await loadUi();
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[1], stateResponse());
+  assert.deepEqual(availablePrompts(ui), [...EXPECTED_PROMPTS.slice(6), EXPECTED_PROMPTS[0], EXPECTED_PROMPTS[2]]);
+});
+
+test("completed follow-ups are skipped and a fresh core result makes them useful again", async () => {
+  const ui = await loadUi();
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[0], forecastResponse());
+  ui.context.updateSuggestionProgress("  WHY WAS THIS PHASE SELECTED?!  ", followupResponse());
+  assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[3]));
+  assert.equal(availablePrompts(ui)[0], EXPECTED_PROMPTS[5]);
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[6], followupResponse());
+  assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[6]));
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[0], forecastResponse());
+  assert.equal(availablePrompts(ui)[0], EXPECTED_PROMPTS[3]);
+  assert.ok(availablePrompts(ui).includes(EXPECTED_PROMPTS[6]));
+});
+
+test("most recent tool determines priority while retaining earlier valid results", async () => {
+  const ui = await loadUi();
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[0], forecastResponse());
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[2], historyResponse());
+  assert.equal(availablePrompts(ui)[0], EXPECTED_PROMPTS[4]);
+  assert.ok(availablePrompts(ui).includes(EXPECTED_PROMPTS[3]));
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[1], stateResponse());
+  assert.deepEqual(availablePrompts(ui).slice(0, 3), EXPECTED_PROMPTS.slice(6));
+  assert.ok(availablePrompts(ui).includes(EXPECTED_PROMPTS[3]));
+  assert.ok(availablePrompts(ui).includes(EXPECTED_PROMPTS[4]));
+});
+
+test("finishing all eligible questions falls back to a nonempty starting-action carousel", async () => {
+  const ui = await loadUi();
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[0], forecastResponse());
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[1], stateResponse());
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[2], historyResponse());
+  for (const prompt of EXPECTED_PROMPTS.slice(3)) ui.context.updateSuggestionProgress(prompt, followupResponse());
+  assert.deepEqual(availablePrompts(ui), STARTER_PROMPTS);
+  ui.clock.tick(); ui.clock.finishFade();
+  assert.ok(STARTER_PROMPTS.includes(ui.nodes.get("promptSuggestion").dataset.prompt));
+});
+
+test("casual, blocked, failed, empty and ungrounded replies never unlock dependent prompts", async () => {
+  const ui = await loadUi();
+  const invalid = [null, { summary: {} },
+    { summary: { mode: "casual_conversation", answer: "Hello!", top_phase_candidates: [{ token_id: 0 }] } },
+    { summary: { mode: "out_of_scope", answer: "Cannot handle that.", agent_graph: { route: "out_of_scope" }, similar_windows: [{}] } },
+    { summary: { intent: "phase_prediction", answer: "No forecast", top_phase_candidates: [] } },
+    { summary: { intent: "retrieve_similar", answer: "No matches", similar_windows: [] } },
+    { summary: { intent: "phase_prediction", mode: "phase_forecast_error", answer: "Failed", top_phase_candidates: [{}] } },
+    { summary: { intent: "explain_state", answer: "" } },
+  ];
+  for (const payload of invalid) {
+    ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[0], payload);
+    assert.deepEqual(availablePrompts(ui), STARTER_PROMPTS);
+  }
+  // An explanation of an old result is not proof that this page ran a forecast.
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[3], followupResponse());
+  assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[3]));
+  assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[5]));
+});
+
+test("new session, missing server memory and reload discard stale prerequisites", async () => {
+  const ui = await loadUi();
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[0], forecastResponse());
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[2], historyResponse());
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[1], stateResponse("session-two"));
+  assert.deepEqual(availablePrompts(ui), [...EXPECTED_PROMPTS.slice(6), EXPECTED_PROMPTS[0], EXPECTED_PROMPTS[2]]);
+  ui.context.updateSuggestionProgress("Explain the previous result", { summary: {
+    mode: "memory_rag_missing_context", thread_id: "session-two", answer: "Run a core tool first.",
+  } });
+  assert.deepEqual(availablePrompts(ui), STARTER_PROMPTS);
+  assert.equal(ui.nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[0]);
+  assert.deepEqual(availablePrompts(await loadUi()), STARTER_PROMPTS);
+});
+
+test("unrelated small talk does not restart the initial carousel or unlock follow-ups", async () => {
+  const ui = await loadUi();
+  ui.clock.tick(); ui.clock.finishFade();
+  ui.context.updateSuggestionProgress("Hello", { summary: { mode: "casual_conversation", answer: "Hello!" } });
+  assert.equal(ui.nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[1]);
+  assert.deepEqual(availablePrompts(ui), STARTER_PROMPTS);
+  ui.clock.tick(); ui.clock.finishFade();
+  assert.equal(ui.nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[2]);
+});
+
+test("response-driven refresh cancels old fades and preserves manual pause and input drafts", async () => {
+  const ui = await loadUi();
+  const input = ui.nodes.get("question");
+  input.value = "Keep this next question";
+  ui.clock.tick();
+  assert.equal(ui.clock.timeouts.size, 1);
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[0], forecastResponse());
+  assert.equal(ui.clock.timeouts.size, 0);
+  assert.equal(ui.nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[3]);
+  assert.equal(input.value, "Keep this next question");
+  await emit(ui.nodes.get("pauseSuggestions"), "click");
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[2], historyResponse());
+  ui.clock.tick(); ui.clock.finishFade();
+  assert.equal(ui.nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[4]);
+  assert.equal(ui.nodes.get("pauseSuggestions").getAttribute("aria-pressed"), "true");
+  assert.equal(input.value, "Keep this next question");
 });
 
 test("hover and keyboard focus do not stop suggestions or overwrite the draft", async () => {
@@ -377,6 +543,7 @@ test("suggestions keep rotating while sending, preserve next draft and prevent d
   assert.equal(nodes.get("question").value, "");
   assert.equal(nodes.has("welcomeState"), false);
   assert.equal(nodes.get("messages").children.length, 2);
+  assert.deepEqual(availablePrompts(ui), STARTER_PROMPTS);
   nodes.get("question").value = "another question";
   nodes.get("question").focus();
   await emit(form, "submit");
@@ -385,12 +552,13 @@ test("suggestions keep rotating while sending, preserve next draft and prevent d
   clock.tick(); clock.finishFade();
   assert.equal(nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[1]);
   assert.equal(nodes.get("question").value, "another question");
-  release({ ok: true, json: async () => ({ summary: { mode: "casual_conversation", answer: "Hello!" } }) });
+  release({ ok: true, json: async () => forecastResponse() });
   await submitting;
   assert.equal(nodes.get("sendButton").disabled, false);
   assert.equal(form.getAttribute("aria-busy"), "false");
+  assert.equal(nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[3]);
   clock.tick(); clock.finishFade();
-  assert.equal(nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[2]);
+  assert.equal(nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[5]);
   assert.equal(nodes.get("question").value, "another question");
 });
 

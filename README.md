@@ -37,13 +37,20 @@ python -m venv .venv
 Open `http://127.0.0.1:7860`. No API key is required for forecasts, historical
 examples, deterministic explanations, or standard casual replies. The initial
 screen identifies the data mode and observation timestamp. Rotating examples
-above the question box suggest forecasts, state explanations, historical
-matches, phase comparisons, and simpler, shorter or Bengali explanations of
-the previous answer. Click an example to fill the box, then press **Enter** or
-the send arrow to submit. Examples keep cycling after a click, while you type,
-and while a reply is pending, without changing your draft. Use the pause icon
-to stop rotation. Follow-up examples need a previous answer or historical
-matches in your session. You can also say hello or thanks.
+above the question box follow your conversation. Initially, only forecast,
+current-state and historical-retrieval actions appear. A successful forecast
+unlocks the phase explanation, plus comparisons when multiple candidates are
+available; retrieved matches unlock the closest-window
+question; a scientific answer unlocks simpler, shorter and Bengali explanations.
+Relevant follow-ups come first, and already-answered examples are skipped until
+a fresh result makes them useful again. After all available examples have been
+used, the starting actions return. Progress is local to the open page and resets
+on reload or when the server reports a new session or missing memory context.
+Click an example to fill the box, then press **Enter** or the send arrow to
+submit. Clicking alone does not advance conversation progress. Examples keep
+cycling after a click, while you type, and while a reply is pending, without
+changing your draft. Use the pause icon to stop rotation. You can also say hello
+or thanks.
 
 The default `WIND_DATA_MODE=snapshot` uses observations ending on
 2026-06-11 at 05:54 UTC. It is an interactive demo of dated observations, not a
