@@ -72,6 +72,10 @@ class DeploymentTests(unittest.TestCase):
             "Explain the previous answer in simple language without technical terms.",
             "Explain the previous answer more briefly in two or three sentences.",
             "Explain the previous answer in Bengali using simple language.",
+            "How strong is the evidence supporting the previous phase forecast?",
+            "Explain the data in the retrieved historical windows.",
+            "Explain what d (retrieval distance) means in the retrieved historical windows.",
+            "Which of the retrieved historical windows is farthest from the current window?",
         ):
             with self.subTest(question=question):
                 self.assertFalse(is_unsupported_request(question))
@@ -137,6 +141,31 @@ class DeploymentTests(unittest.TestCase):
         result = self.ask("retrieve similar historical windows")
         self.assertTrue(result["similar_windows"])
         self.assertLessEqual(len(result["similar_windows"]), 5)
+
+    def test_hierarchical_retrieval_followups_use_the_existing_results(self):
+        result = self.ask("retrieve similar historical windows")
+        rows = result["similar_windows"]
+        closest = min(rows, key=lambda row: row["retrieval_distance"])
+        farthest = max(rows, key=lambda row: row["retrieval_distance"])
+        session_dir = next((Path(self.temp.name) / "sessions").iterdir())
+        memory_file = session_dir / "session_memory.json"
+        stored_result = json.loads(memory_file.read_text(encoding="utf-8"))[session_dir.name]["last_tool_result"]
+        checks = (
+            ("Explain the data in the retrieved historical windows.", ("window_id", "regime_name")),
+            ("Explain what d (retrieval distance) means in the retrieved historical windows.",
+             ("d stands for retrieval distance", "smaller d")),
+            ("Which retrieved historical window is most similar to the current window?",
+             (closest["window_id"], "lowest retrieval distance")),
+            ("Which of the retrieved historical windows is farthest from the current window?",
+             (farthest["window_id"], "highest retrieval distance", "stored retrieved windows")),
+        )
+        for question, expected in checks:
+            with self.subTest(question=question):
+                reply = self.ask(question)
+                self.assertEqual(reply["agent_graph"]["route"], "memory_followup")
+                for text in expected:
+                    self.assertIn(text, reply["answer"])
+                self.assertEqual(json.loads(memory_file.read_text(encoding="utf-8"))[session_dir.name]["last_tool_result"], stored_result)
 
     def test_feedback_isolated_between_signed_sessions(self):
         self.ask("predict next phase")

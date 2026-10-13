@@ -861,6 +861,26 @@ class ControlledHITLAgentGraph:
                     if similar_rows:
                         break
             if similar_rows:
+                asks_distance_meaning = bool(question_terms & {"d", "distance"}) and bool(
+                    question_terms & {"mean", "means", "meaning", "stands", "represent", "represents", "explain"}
+                ) and not bool(question_terms & {"closest", "nearest", "farthest", "furthest", "least", "most"})
+                if asks_distance_meaning:
+                    return (
+                        "d stands for retrieval distance: a score comparing a past window's numerical "
+                        "wind-condition representation with the query window. A smaller d means a closer "
+                        "match in that representation. It is not a distance in meters, a wind speed, "
+                        "or a forecast probability. This explains the stored retrieval results; no new retrieval was run."
+                    )
+                if "explain" in question_terms and question_terms & {"data", "rows", "table", "results"}:
+                    return (
+                        f"The {len(similar_rows)} stored rows are past observation windows returned as "
+                        "similar examples. window_id identifies each observation period; regime_name names "
+                        "its wind pattern; d is retrieval distance, with smaller values indicating closer "
+                        "matches to the query window. Wind-speed fields, when present, are measured in m/s. "
+                        "Closest and farthest comparisons apply to these retrieved rows. These historical "
+                        "examples are evidence for comparison, not predictions of the next window. "
+                        "No new retrieval was run."
+                    )
                 def _distance(row: dict[str, Any]) -> float:
                     try:
                         return float(row.get("retrieval_distance"))

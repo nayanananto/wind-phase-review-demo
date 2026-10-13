@@ -38,13 +38,23 @@ Open `http://127.0.0.1:7860`. No API key is required for forecasts, historical
 examples, deterministic explanations, or standard casual replies. The initial
 screen identifies the data mode and observation timestamp. Rotating examples
 above the question box follow your conversation. Initially, only forecast,
-current-state and historical-retrieval actions appear. A successful forecast
-unlocks the phase explanation, plus comparisons when multiple candidates are
-available; retrieved matches unlock the closest-window
-question; a scientific answer unlocks simpler, shorter and Bengali explanations.
-Relevant follow-ups come first, and already-answered examples are skipped until
-a fresh result makes them useful again. After all available examples have been
-used, the starting actions return. Progress is local to the open page and resets
+current-state and historical-retrieval actions appear. Suggestions then follow
+the most recent successful action, rather than mixing follow-ups from old results:
+
+- **Forecast:** why this phase, why not the alternatives (when available), and
+  how strong the supporting evidence is.
+- **Explain current state:** a briefer explanation, a Bangla explanation, and
+  an explanation without technical terms.
+- **Retrieve similar windows:** explain the data, explain distance `d`, identify
+  the closest window, and identify the farthest among the retrieved windows
+  (when at least two matches are available).
+
+After a forecast or retrieval follow-up is answered, brief, Bangla and simple
+versions become available at the next level. Answered examples are skipped until
+a fresh core result makes them useful again. Remaining core actions follow the
+current branch, and the starting actions return when all available examples
+have been used. Small talk or a failed request preserves the current branch.
+Progress is local to the open page and resets
 on reload or when the server reports a new session or missing memory context.
 Click an example to fill the box, then press **Enter** or the send arrow to
 submit. Clicking alone does not advance conversation progress. Examples keep

@@ -6,19 +6,32 @@ const PROMPT_SUGGESTIONS = [
   { id: "predict_phase", needs: "start", text: "Predict the next wind phase", prompt: "predict next phase" },
   { id: "explain_state", needs: "start", text: "Explain the current wind state", prompt: "explain current live state" },
   { id: "retrieve_history", needs: "start", text: "Find similar historical windows", prompt: "retrieve similar historical windows" },
-  { id: "why_phase", needs: "forecast", text: "After a forecast: why was this phase selected?", prompt: "why was this phase selected?" },
-  { id: "closest_window", needs: "history", text: "Which past window is closest?", prompt: "Which retrieved historical window is most similar to the current window?" },
-  { id: "alternative_phases", needs: "forecast", text: "Why this phase, not the alternatives?", prompt: "Why was this phase selected instead of the other candidate phases?" },
-  { id: "explain_simply", needs: "answer", text: "Explain it simply, without technical terms", prompt: "Explain the previous answer in simple language without technical terms." },
-  { id: "explain_briefly", needs: "answer", text: "Give me a shorter explanation", prompt: "Explain the previous answer more briefly in two or three sentences." },
-  { id: "explain_bengali", needs: "answer", text: "Explain it in Bengali", prompt: "Explain the previous answer in Bengali using simple language." },
+  { id: "why_phase", needs: "forecast", text: "Why was this phase selected?", prompt: "why was this phase selected?", asked: /^(?!.*\b(?:alternatives?|other|instead|why not)\b).*\bwhy\b.*\b(?:phase|state|selected|chosen|chose|choose)\b/ },
+  { id: "closest_window", needs: "history", text: "Which retrieved window is closest?", prompt: "Which retrieved historical window is most similar to the current window?", asked: /\b(?:closest|nearest|most similar)\b/ },
+  { id: "alternative_phases", needs: "forecast", text: "Why this phase, not the alternatives?", prompt: "Why was this phase selected instead of the other candidate phases?", asked: /\balternatives?\b|\bother\b.*\b(?:phases?|candidates?)\b|\bwhy not\b/ },
+  { id: "explain_simply", needs: "answer", text: "Explain it without technical terms", prompt: "Explain the previous answer in simple language without technical terms.", asked: /\bsimpl(?:e|er|y)\b|\b(?:skip|without|avoid|no)\b.*\b(?:technical|jargon)\b/ },
+  { id: "explain_briefly", needs: "answer", text: "Explain it more briefly", prompt: "Explain the previous answer more briefly in two or three sentences.", asked: /\b(?:brief(?:ly)?|short(?:er)?|concise)\b/ },
+  { id: "explain_bengali", needs: "answer", text: "Explain it in Bangla", prompt: "Explain the previous answer in Bengali using simple language.", asked: /\b(?:bengali|bangla)\b|বাংলা/ },
+  { id: "forecast_confidence", needs: "forecast", text: "How strong is the evidence for this forecast?", prompt: "How strong is the evidence supporting the previous phase forecast?", asked: /\b(?:confiden(?:ce|t)|reliable|support)\b|\bhow strong\b/ },
+  { id: "explain_retrieval", needs: "history", text: "Explain the retrieved data", prompt: "Explain the data in the retrieved historical windows.", asked: /\bexplain\b.*\b(?:data|rows|table|results)\b/ },
+  { id: "retrieval_distance", needs: "history", text: "What does d mean here?", prompt: "Explain what d (retrieval distance) means in the retrieved historical windows.", asked: /\b(?:distance|d)\b.*\b(?:mean|means|meaning|stands|represent)\b|\b(?:what|explain)\b.*\b(?:distance|d)\b/ },
+  { id: "farthest_window", needs: "history", text: "Which retrieved window is farthest?", prompt: "Which of the retrieved historical windows is farthest from the current window?", asked: /\b(?:farthest|furthest|least similar|most different)\b/ },
 ];
+
+// Follow the current branch, then offer explanation refinements and next actions.
+const EXPLANATION_SUGGESTIONS = ["explain_briefly", "explain_bengali", "explain_simply"];
+const PROMPT_HIERARCHY = {
+  forecast: ["why_phase", "alternative_phases", "forecast_confidence"],
+  state: [],
+  history: ["explain_retrieval", "retrieval_distance", "closest_window", "farthest_window"],
+};
 
 // This progress belongs to the visible conversation, not shared browser storage.
 const suggestionProgress = {
   hasForecast: false,
   hasAlternatives: false,
   hasHistory: false,
+  hasHistoryComparison: false,
   canClarify: false,
   lastTopic: null,
   threadId: null,
@@ -30,6 +43,7 @@ function resetSuggestionProgress(threadId = suggestionProgress.threadId) {
   suggestionProgress.hasForecast = false;
   suggestionProgress.hasAlternatives = false;
   suggestionProgress.hasHistory = false;
+  suggestionProgress.hasHistoryComparison = false;
   suggestionProgress.canClarify = false;
   suggestionProgress.lastTopic = null;
   suggestionProgress.threadId = threadId;
@@ -38,22 +52,21 @@ function resetSuggestionProgress(threadId = suggestionProgress.threadId) {
 
 function suggestionIsReady(suggestion) {
   return suggestion.needs === "start"
-    || (suggestion.needs === "forecast" && suggestionProgress.hasForecast
+    || (suggestion.needs === "forecast" && suggestionProgress.lastTopic === "forecast" && suggestionProgress.hasForecast
       && (suggestion.id !== "alternative_phases" || suggestionProgress.hasAlternatives))
-    || (suggestion.needs === "history" && suggestionProgress.hasHistory)
-    || (suggestion.needs === "answer" && suggestionProgress.canClarify);
+    || (suggestion.needs === "history" && suggestionProgress.lastTopic === "history" && suggestionProgress.hasHistory
+      && (suggestion.id !== "farthest_window" || suggestionProgress.hasHistoryComparison))
+    || (suggestion.needs === "answer" && suggestionProgress.lastTopic && suggestionProgress.canClarify);
 }
 
 function getPromptSuggestions() {
-  const unused = PROMPT_SUGGESTIONS.filter((suggestion) => suggestionIsReady(suggestion)
-    && !suggestionProgress.completed.has(suggestion.id));
-  // Keep the carousel useful after all eligible questions have been explored.
-  if (!unused.length) return PROMPT_SUGGESTIONS.filter((suggestion) => suggestion.needs === "start");
-  const preferred = ["forecast", "history"].includes(suggestionProgress.lastTopic)
-    ? suggestionProgress.lastTopic : "answer";
-  const priority = (suggestion) => suggestion.needs === preferred ? 0
-    : suggestion.needs === "answer" ? 1 : suggestion.needs === "start" ? 3 : 2;
-  return unused.sort((a, b) => priority(a) - priority(b));
+  const branch = PROMPT_HIERARCHY[suggestionProgress.lastTopic] || [];
+  const nextIds = [...branch, ...EXPLANATION_SUGGESTIONS,
+    ...PROMPT_SUGGESTIONS.filter((item) => item.needs === "start").map((item) => item.id)];
+  const unused = nextIds.map((id) => PROMPT_SUGGESTIONS.find((item) => item.id === id))
+    .filter((item) => suggestionIsReady(item) && !suggestionProgress.completed.has(item.id));
+  // Keep offering a next step once this branch and the other core actions are done.
+  return unused.length ? unused : PROMPT_SUGGESTIONS.filter((item) => item.needs === "start");
 }
 
 function updateSuggestionProgress(question, payload) {
@@ -81,11 +94,11 @@ function updateSuggestionProgress(question, payload) {
   const state = !blocked && route === "explain_state" && hasAnswer;
   const followup = !blocked && hasAnswer && (route === "memory_followup"
     || ["memory_rag_followup", "llm_memory_rag_followup"].includes(s.mode));
-  suggestionProgress.canClarify = Boolean(forecast || history || state || followup);
 
   if (forecast || history || state) {
     const topic = forecast ? "forecast" : history ? "history" : "state";
     suggestionProgress.lastTopic = topic;
+    suggestionProgress.canClarify = state;
     // A fresh core result makes its own follow-up questions useful again.
     for (const suggestion of PROMPT_SUGGESTIONS) {
       if (suggestion.needs === topic || suggestion.needs === "answer") {
@@ -98,15 +111,21 @@ function updateSuggestionProgress(question, payload) {
       suggestionProgress.hasForecast = true;
       suggestionProgress.hasAlternatives = s.top_phase_candidates.length > 1;
     }
-    if (history) suggestionProgress.hasHistory = true;
+    if (history) {
+      suggestionProgress.hasHistory = true;
+      suggestionProgress.hasHistoryComparison = s.similar_windows.length > 1;
+    }
   }
 
-  if (suggestionProgress.canClarify) {
+  if ((followup || state) && suggestionProgress.lastTopic) {
+    // A reason/data explanation opens the next level: brief, Bangla, and simple.
+    suggestionProgress.canClarify = true;
     const normalize = (text) => String(text || "").trim().toLowerCase()
       .replace(/\s+/g, " ").replace(/[.!?]+$/, "");
-    const asked = PROMPT_SUGGESTIONS.find((suggestion) => suggestion.needs !== "start"
-      && normalize(suggestion.prompt) === normalize(question));
-    if (asked && suggestionIsReady(asked)) suggestionProgress.completed.add(asked.id);
+    const eligible = PROMPT_SUGGESTIONS.filter((item) => item.needs !== "start" && suggestionIsReady(item));
+    const exact = eligible.find((item) => normalize(item.prompt) === normalize(question));
+    const asked = exact ? [exact] : eligible.filter((item) => item.asked?.test(normalize(question)));
+    for (const item of asked) suggestionProgress.completed.add(item.id);
   }
   const nextPool = getPromptSuggestions().map((suggestion) => suggestion.id).join(",");
   if (newThread || forecast || history || state || previousPool !== nextPool) refreshPromptSuggestions();

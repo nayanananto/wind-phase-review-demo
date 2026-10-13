@@ -16,8 +16,15 @@ const EXPECTED_PROMPTS = ["predict next phase", "explain current live state",
   "Why was this phase selected instead of the other candidate phases?",
   "Explain the previous answer in simple language without technical terms.",
   "Explain the previous answer more briefly in two or three sentences.",
-  "Explain the previous answer in Bengali using simple language."];
+  "Explain the previous answer in Bengali using simple language.",
+  "How strong is the evidence supporting the previous phase forecast?",
+  "Explain the data in the retrieved historical windows.",
+  "Explain what d (retrieval distance) means in the retrieved historical windows.",
+  "Which of the retrieved historical windows is farthest from the current window?"];
 const STARTER_PROMPTS = EXPECTED_PROMPTS.slice(0, 3);
+const STYLE_PROMPTS = [EXPECTED_PROMPTS[7], EXPECTED_PROMPTS[8], EXPECTED_PROMPTS[6]];
+const FORECAST_PROMPTS = [EXPECTED_PROMPTS[3], EXPECTED_PROMPTS[5], EXPECTED_PROMPTS[9]];
+const HISTORY_PROMPTS = [EXPECTED_PROMPTS[10], EXPECTED_PROMPTS[11], EXPECTED_PROMPTS[4], EXPECTED_PROMPTS[12]];
 
 const forecastResponse = (thread = "session-one") => ({ summary: {
   intent: "phase_prediction", mode: "deterministic_live_phase_prediction",
@@ -31,7 +38,8 @@ const forecastResponse = (thread = "session-one") => ({ summary: {
 const historyResponse = (thread = "session-one") => ({ summary: {
   intent: "retrieve_similar", mode: "retrieve_similar", agent_graph: { route: "retrieve_similar" },
   thread_id: thread, answer: "Retrieved similar historical windows.",
-  similar_windows: [{ window_id: "historical-example", retrieval_distance: 0.1427 }],
+  similar_windows: [{ window_id: "historical-example", retrieval_distance: 0.1427 },
+    { window_id: "historical-example-farther", retrieval_distance: 0.3521 }],
 } });
 const stateResponse = (thread = "session-one") => ({ summary: {
   intent: "explain_state", mode: "explain_window", agent_graph: { route: "explain_state" },
@@ -251,8 +259,9 @@ test("every unlocked follow-up fills only its own prompt without submitting or s
   context.updateSuggestionProgress(EXPECTED_PROMPTS[0], forecastResponse());
   context.updateSuggestionProgress(EXPECTED_PROMPTS[1], stateResponse());
   context.updateSuggestionProgress(EXPECTED_PROMPTS[2], historyResponse());
+  context.updateSuggestionProgress("Tell me more about these retrieved windows", followupResponse());
   const pool = availablePrompts(ui);
-  assert.equal(pool.length, 6);
+  assert.deepEqual(pool, [...HISTORY_PROMPTS, ...STYLE_PROMPTS]);
   const button = nodes.get("promptSuggestion");
   const input = nodes.get("question");
   for (const prompt of pool) {
@@ -273,17 +282,15 @@ test("successful forecast unlocks why/alternatives first but not historical comp
   await emit(ui.nodes.get("promptSuggestion"), "click");
   assert.deepEqual(availablePrompts(ui), STARTER_PROMPTS);
   ui.context.updateSuggestionProgress("Forecast the next wind regime", forecastResponse());
-  assert.deepEqual(availablePrompts(ui), [EXPECTED_PROMPTS[3], EXPECTED_PROMPTS[5],
-    ...EXPECTED_PROMPTS.slice(6), EXPECTED_PROMPTS[1], EXPECTED_PROMPTS[2]]);
+  assert.deepEqual(availablePrompts(ui), [...FORECAST_PROMPTS, EXPECTED_PROMPTS[1], EXPECTED_PROMPTS[2]]);
   assert.equal(ui.nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[3]);
 });
 
-test("history retrieval unlocks closest-window first without unlocking phase questions", async () => {
+test("history retrieval offers data, distance and window comparisons in order", async () => {
   const ui = await loadUi();
   ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[2], historyResponse());
-  assert.deepEqual(availablePrompts(ui), [EXPECTED_PROMPTS[4], ...EXPECTED_PROMPTS.slice(6),
-    EXPECTED_PROMPTS[0], EXPECTED_PROMPTS[1]]);
-  assert.equal(ui.nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[4]);
+  assert.deepEqual(availablePrompts(ui), [...HISTORY_PROMPTS, EXPECTED_PROMPTS[0], EXPECTED_PROMPTS[1]]);
+  assert.equal(ui.nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[10]);
 });
 
 test("alternative comparisons require more than one returned phase candidate", async () => {
@@ -297,10 +304,67 @@ test("alternative comparisons require more than one returned phase candidate", a
   assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[5]));
 });
 
+test("farthest-window comparison requires two retrieved matches", async () => {
+  const ui = await loadUi();
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[2], historyResponse());
+  assert.ok(availablePrompts(ui).includes(EXPECTED_PROMPTS[12]));
+  const singleMatch = historyResponse();
+  singleMatch.summary.similar_windows = singleMatch.summary.similar_windows.slice(0, 1);
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[2], singleMatch);
+  assert.ok(availablePrompts(ui).includes(EXPECTED_PROMPTS[4]));
+  assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[12]));
+});
+
+test("a retrieval explanation opens refinements and skips only the answered child", async () => {
+  const ui = await loadUi();
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[2], historyResponse());
+  assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[7]));
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[10], followupResponse());
+  assert.deepEqual(availablePrompts(ui), [...HISTORY_PROMPTS.slice(1), ...STYLE_PROMPTS,
+    EXPECTED_PROMPTS[0], EXPECTED_PROMPTS[1]]);
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[11], followupResponse());
+  assert.deepEqual(availablePrompts(ui).slice(0, 2), [EXPECTED_PROMPTS[4], EXPECTED_PROMPTS[12]]);
+});
+
+test("ordinary manually typed follow-ups are also recorded as answered", async () => {
+  const ui = await loadUi();
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[0], forecastResponse());
+  ui.context.updateSuggestionProgress("why not the other phases?", followupResponse());
+  assert.ok(availablePrompts(ui).includes(EXPECTED_PROMPTS[3]));
+  assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[5]));
+  ui.context.updateSuggestionProgress("why this phase?", followupResponse());
+  assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[3]));
+  ui.context.updateSuggestionProgress("Explain briefly", followupResponse());
+  assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[7]));
+  ui.context.updateSuggestionProgress("Explain in Bangla", followupResponse());
+  assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[8]));
+  ui.context.updateSuggestionProgress("Skip technical terms", followupResponse());
+  assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[6]));
+});
+
+test("small talk, blocked questions and failures preserve the active branch and progress", async () => {
+  const ui = await loadUi();
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[2], historyResponse());
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[10], followupResponse());
+  const before = availablePrompts(ui);
+  const visible = ui.nodes.get("promptSuggestion").dataset.prompt;
+  for (const payload of [null, { summary: {} },
+    { summary: { mode: "casual_conversation", answer: "Thanks!" } },
+    { summary: { mode: "out_of_scope", answer: "Unsupported question." } },
+    { summary: { mode: "phase_forecast_error", intent: "phase_prediction", answer: "Failed." } }]) {
+    ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[11], payload);
+    assert.deepEqual(availablePrompts(ui), before);
+    assert.equal(ui.nodes.get("promptSuggestion").dataset.prompt, visible);
+  }
+});
+
 test("state explanation unlocks only answer-style follow-ups and remaining starting actions", async () => {
   const ui = await loadUi();
   ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[1], stateResponse());
-  assert.deepEqual(availablePrompts(ui), [...EXPECTED_PROMPTS.slice(6), EXPECTED_PROMPTS[0], EXPECTED_PROMPTS[2]]);
+  assert.deepEqual(availablePrompts(ui), [...STYLE_PROMPTS, EXPECTED_PROMPTS[0], EXPECTED_PROMPTS[2]]);
+  ui.context.updateSuggestionProgress("Explain the current wind state in Bangla", stateResponse());
+  assert.deepEqual(availablePrompts(ui), [EXPECTED_PROMPTS[7], EXPECTED_PROMPTS[6],
+    EXPECTED_PROMPTS[0], EXPECTED_PROMPTS[2]]);
 });
 
 test("completed follow-ups are skipped and a fresh core result makes them useful again", async () => {
@@ -313,19 +377,23 @@ test("completed follow-ups are skipped and a fresh core result makes them useful
   assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[6]));
   ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[0], forecastResponse());
   assert.equal(availablePrompts(ui)[0], EXPECTED_PROMPTS[3]);
+  assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[6]));
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[3], followupResponse());
   assert.ok(availablePrompts(ui).includes(EXPECTED_PROMPTS[6]));
 });
 
-test("most recent tool determines priority while retaining earlier valid results", async () => {
+test("switching core actions replaces the branch without leaking old follow-ups", async () => {
   const ui = await loadUi();
   ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[0], forecastResponse());
   ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[2], historyResponse());
-  assert.equal(availablePrompts(ui)[0], EXPECTED_PROMPTS[4]);
-  assert.ok(availablePrompts(ui).includes(EXPECTED_PROMPTS[3]));
+  assert.deepEqual(availablePrompts(ui), [...HISTORY_PROMPTS, EXPECTED_PROMPTS[1]]);
+  assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[3]));
   ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[1], stateResponse());
-  assert.deepEqual(availablePrompts(ui).slice(0, 3), EXPECTED_PROMPTS.slice(6));
-  assert.ok(availablePrompts(ui).includes(EXPECTED_PROMPTS[3]));
-  assert.ok(availablePrompts(ui).includes(EXPECTED_PROMPTS[4]));
+  assert.deepEqual(availablePrompts(ui), STYLE_PROMPTS);
+  assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[3]));
+  assert.ok(!availablePrompts(ui).includes(EXPECTED_PROMPTS[4]));
+  ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[0], forecastResponse());
+  assert.deepEqual(availablePrompts(ui), FORECAST_PROMPTS);
 });
 
 test("finishing all eligible questions falls back to a nonempty starting-action carousel", async () => {
@@ -333,7 +401,7 @@ test("finishing all eligible questions falls back to a nonempty starting-action 
   ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[0], forecastResponse());
   ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[1], stateResponse());
   ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[2], historyResponse());
-  for (const prompt of EXPECTED_PROMPTS.slice(3)) ui.context.updateSuggestionProgress(prompt, followupResponse());
+  for (const prompt of [...HISTORY_PROMPTS, ...STYLE_PROMPTS]) ui.context.updateSuggestionProgress(prompt, followupResponse());
   assert.deepEqual(availablePrompts(ui), STARTER_PROMPTS);
   ui.clock.tick(); ui.clock.finishFade();
   assert.ok(STARTER_PROMPTS.includes(ui.nodes.get("promptSuggestion").dataset.prompt));
@@ -364,7 +432,7 @@ test("new session, missing server memory and reload discard stale prerequisites"
   ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[0], forecastResponse());
   ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[2], historyResponse());
   ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[1], stateResponse("session-two"));
-  assert.deepEqual(availablePrompts(ui), [...EXPECTED_PROMPTS.slice(6), EXPECTED_PROMPTS[0], EXPECTED_PROMPTS[2]]);
+  assert.deepEqual(availablePrompts(ui), [...STYLE_PROMPTS, EXPECTED_PROMPTS[0], EXPECTED_PROMPTS[2]]);
   ui.context.updateSuggestionProgress("Explain the previous result", { summary: {
     mode: "memory_rag_missing_context", thread_id: "session-two", answer: "Run a core tool first.",
   } });
@@ -396,7 +464,7 @@ test("response-driven refresh cancels old fades and preserves manual pause and i
   await emit(ui.nodes.get("pauseSuggestions"), "click");
   ui.context.updateSuggestionProgress(EXPECTED_PROMPTS[2], historyResponse());
   ui.clock.tick(); ui.clock.finishFade();
-  assert.equal(ui.nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[4]);
+  assert.equal(ui.nodes.get("promptSuggestion").dataset.prompt, EXPECTED_PROMPTS[10]);
   assert.equal(ui.nodes.get("pauseSuggestions").getAttribute("aria-pressed"), "true");
   assert.equal(input.value, "Keep this next question");
 });
