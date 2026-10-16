@@ -4,8 +4,9 @@ import os
 import re
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ["OPENAI_API_KEY"] = ""
 os.environ["WIND_DATA_MODE"] = "snapshot"
@@ -57,8 +58,8 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(forecast["numeric_forecast"], {})
         self.assertFalse(forecast["llm_available"])
         followup = self.ask("why was this phase selected?")
-        self.assertIn("memory", followup["mode"])
-        self.assertTrue(followup["answer"])
+        self.assertEqual(followup["mode"], "out_of_scope")
+        self.assertEqual(followup["answer"], OUT_OF_SCOPE_ANSWER)
 
     def test_new_suggestion_followups_keep_existing_memory_route(self):
         from app.hitl.controlled_agent_graph import ControlledHITLAgentGraph
@@ -145,27 +146,80 @@ class DeploymentTests(unittest.TestCase):
     def test_hierarchical_retrieval_followups_use_the_existing_results(self):
         result = self.ask("retrieve similar historical windows")
         rows = result["similar_windows"]
-        closest = min(rows, key=lambda row: row["retrieval_distance"])
-        farthest = max(rows, key=lambda row: row["retrieval_distance"])
         session_dir = next((Path(self.temp.name) / "sessions").iterdir())
         memory_file = session_dir / "session_memory.json"
         stored_result = json.loads(memory_file.read_text(encoding="utf-8"))[session_dir.name]["last_tool_result"]
-        checks = (
-            ("Explain the data in the retrieved historical windows.", ("window_id", "regime_name")),
-            ("Explain what d (retrieval distance) means in the retrieved historical windows.",
-             ("d stands for retrieval distance", "smaller d")),
-            ("Which retrieved historical window is most similar to the current window?",
-             (closest["window_id"], "lowest retrieval distance")),
-            ("Which of the retrieved historical windows is farthest from the current window?",
-             (farthest["window_id"], "highest retrieval distance", "stored retrieved windows")),
-        )
-        for question, expected in checks:
+        for question in (
+            "Explain the data in the retrieved historical windows.",
+            "Explain what d (retrieval distance) means in the retrieved historical windows.",
+            "Which retrieved historical window is most similar to the current window?",
+            "Which of the retrieved historical windows is farthest from the current window?",
+        ):
             with self.subTest(question=question):
                 reply = self.ask(question)
-                self.assertEqual(reply["agent_graph"]["route"], "memory_followup")
-                for text in expected:
-                    self.assertIn(text, reply["answer"])
+                # This test runs without an LLM key: do not substitute a canned
+                # memory explanation, and do not overwrite the retrieval result.
+                self.assertEqual(reply["mode"], "out_of_scope")
+                self.assertEqual(reply["answer"], OUT_OF_SCOPE_ANSWER)
+                self.assertNotIn("memory_rag_debug", reply)
+                self.assertNotIn("similar_windows", reply)
                 self.assertEqual(json.loads(memory_file.read_text(encoding="utf-8"))[session_dir.name]["last_tool_result"], stored_result)
+
+    def test_failed_llm_explanations_return_only_standard_unsupported_summary(self):
+        cases = (
+            {"mode": "memory_rag_unavailable", "memory_rag_debug": {"llm_error": {"category": "timeout"}}},
+            {"mode": "memory_rag_missing_context"},
+            {"mode": "retrieve_similar", "explanation_mode": "heuristic"},
+            {"mode": "explain_window", "explanation_mode": "heuristic"},
+            {"mode": "deterministic_live_phase_prediction"},
+            {"mode": "llm_memory_rag_followup", "answer": OUT_OF_SCOPE_ANSWER},
+        )
+        for result in cases:
+            with self.subTest(mode=result["mode"]):
+                result = {"answer": "Canned explanation must never be displayed", "similar_windows": [{"secret": "extra"}], **result}
+                pipeline = SimpleNamespace(reasoner=None, process=lambda **kwargs: result)
+                with patch.object(server, "_claim_llm_request", return_value=True), \
+                     patch.object(server.original_ui, "StandaloneHITLPipeline", return_value=pipeline):
+                    reply = self.ask("Explain what d means in the retrieved historical windows.")
+                self.assertEqual(reply["mode"], "out_of_scope")
+                self.assertEqual(reply["answer"], OUT_OF_SCOPE_ANSWER)
+                self.assertEqual(set(reply), {"intent", "mode", "answer", "demo_data_mode", "agent_graph"})
+
+    def test_exhausted_public_llm_allowance_never_exposes_deterministic_explanation(self):
+        result = {"mode": "deterministic_live_phase_prediction", "answer": "Hidden canned answer",
+                  "agent_graph": {"route": "phase_prediction"}}
+        pipeline = SimpleNamespace(reasoner=None, process=lambda **kwargs: result)
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "unit-test-placeholder"}), \
+             patch.object(server, "_claim_llm_request", return_value=False), \
+             patch.object(server.original_ui, "StandaloneHITLPipeline", return_value=pipeline):
+            reply = self.ask("predict next phase")
+        self.assertEqual(reply["answer"], OUT_OF_SCOPE_ANSWER)
+        self.assertNotIn("critic_warnings", reply)
+
+    def test_llm_retrieval_followup_failure_and_recovery_preserve_stored_results(self):
+        reasoner = SimpleNamespace(available=True, last_error=None)
+        reasoner.invoke_json_with_raw = Mock(side_effect=[
+            ({"answer": "Here are the historical matches.", "evidence": []}, None),
+            ({"answer": "Smaller d means a closer match between the wind-pattern embeddings.", "evidence": []}, None),
+            (None, None),
+            ({"answer": "The nearest match has the lowest d among the stored windows.", "evidence": []}, None),
+        ])
+        with patch.object(server, "_claim_llm_request", return_value=True), \
+             patch("app.hitl.standalone_pipeline.SemanticReasoner", return_value=reasoner):
+            retrieval = self.ask("retrieve similar historical windows")
+            self.assertEqual(retrieval["explanation_mode"], "llm_rag")
+            session_dir = next((Path(self.temp.name) / "sessions").iterdir())
+            memory_file = session_dir / "session_memory.json"
+            saved = json.loads(memory_file.read_text(encoding="utf-8"))[session_dir.name]["last_tool_result"]
+            success = self.ask("Explain what d (retrieval distance) means in the retrieved historical windows.")
+            self.assertTrue(success["memory_rag_debug"]["llm_used"])
+            self.assertIn("embeddings", success["answer"])
+            failed = self.ask("Which retrieved window is closest?")
+            self.assertEqual(failed["answer"], OUT_OF_SCOPE_ANSWER)
+            self.assertNotIn("memory_rag_debug", failed)
+            recovered = self.ask("Which retrieved window is closest?")
+            self.assertTrue(recovered["memory_rag_debug"]["llm_used"])
+            self.assertEqual(json.loads(memory_file.read_text(encoding="utf-8"))[session_dir.name]["last_tool_result"], saved)
 
     def test_feedback_isolated_between_signed_sessions(self):
         self.ask("predict next phase")
@@ -247,8 +301,8 @@ class DeploymentTests(unittest.TestCase):
             self.assertEqual(memory_file.read_bytes(), before)
         self.assertFalse((session_dir / "feedback.jsonl").exists())
         followup = self.ask("why was this phase selected?")
-        self.assertIn("memory", followup["mode"])
-        self.assertTrue(followup["answer"])
+        self.assertEqual(followup["mode"], "out_of_scope")
+        self.assertEqual(followup["answer"], OUT_OF_SCOPE_ANSWER)
         repeated = self.ask("predict next phase")
         self.assertEqual(repeated["top_phase_candidates"], forecast["top_phase_candidates"])
         self.assertEqual(repeated["phase_support"], forecast["phase_support"])
@@ -263,7 +317,8 @@ class DeploymentTests(unittest.TestCase):
             forecast = self.ask(questions[0])
             self.assertTrue(forecast["top_phase_candidates"])
             followup = self.ask(questions[1])
-            self.assertIn("memory", followup["mode"])
+            self.assertEqual(followup["mode"], "out_of_scope")
+            self.assertEqual(followup["answer"], OUT_OF_SCOPE_ANSWER)
             retrieval = self.ask(questions[2])
             self.assertTrue(retrieval["similar_windows"])
             feedback = self.ask(questions[3])

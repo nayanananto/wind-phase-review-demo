@@ -9,19 +9,16 @@ const PROMPT_SUGGESTIONS = [
   { id: "why_phase", needs: "forecast", text: "Why was this phase selected?", prompt: "why was this phase selected?", asked: /^(?!.*\b(?:alternatives?|other|instead|why not)\b).*\bwhy\b.*\b(?:phase|state|selected|chosen|chose|choose)\b/ },
   { id: "closest_window", needs: "history", text: "Which retrieved window is closest?", prompt: "Which retrieved historical window is most similar to the current window?", asked: /\b(?:closest|nearest|most similar)\b/ },
   { id: "alternative_phases", needs: "forecast", text: "Why this phase, not the alternatives?", prompt: "Why was this phase selected instead of the other candidate phases?", asked: /\balternatives?\b|\bother\b.*\b(?:phases?|candidates?)\b|\bwhy not\b/ },
-  { id: "explain_simply", needs: "answer", text: "Explain it without technical terms", prompt: "Explain the previous answer in simple language without technical terms.", asked: /\bsimpl(?:e|er|y)\b|\b(?:skip|without|avoid|no)\b.*\b(?:technical|jargon)\b/ },
-  { id: "explain_briefly", needs: "answer", text: "Explain it more briefly", prompt: "Explain the previous answer more briefly in two or three sentences.", asked: /\b(?:brief(?:ly)?|short(?:er)?|concise)\b/ },
   { id: "explain_bengali", needs: "answer", text: "Explain it in Bangla", prompt: "Explain the previous answer in Bengali using simple language.", asked: /\b(?:bengali|bangla)\b|বাংলা/ },
-  { id: "forecast_confidence", needs: "forecast", text: "How strong is the evidence for this forecast?", prompt: "How strong is the evidence supporting the previous phase forecast?", asked: /\b(?:confiden(?:ce|t)|reliable|support)\b|\bhow strong\b/ },
   { id: "explain_retrieval", needs: "history", text: "Explain the retrieved data", prompt: "Explain the data in the retrieved historical windows.", asked: /\bexplain\b.*\b(?:data|rows|table|results)\b/ },
   { id: "retrieval_distance", needs: "history", text: "What does d mean here?", prompt: "Explain what d (retrieval distance) means in the retrieved historical windows.", asked: /\b(?:distance|d)\b.*\b(?:mean|means|meaning|stands|represent)\b|\b(?:what|explain)\b.*\b(?:distance|d)\b/ },
   { id: "farthest_window", needs: "history", text: "Which retrieved window is farthest?", prompt: "Which of the retrieved historical windows is farthest from the current window?", asked: /\b(?:farthest|furthest|least similar|most different)\b/ },
 ];
 
 // Follow the current branch, then offer explanation refinements and next actions.
-const EXPLANATION_SUGGESTIONS = ["explain_briefly", "explain_bengali", "explain_simply"];
+const EXPLANATION_SUGGESTIONS = ["explain_bengali"];
 const PROMPT_HIERARCHY = {
-  forecast: ["why_phase", "alternative_phases", "forecast_confidence"],
+  forecast: ["why_phase", "alternative_phases"],
   state: [],
   history: ["explain_retrieval", "retrieval_distance", "closest_window", "farthest_window"],
 };
@@ -86,6 +83,7 @@ function updateSuggestionProgress(question, payload) {
   const route = s.agent_graph?.route || s.intent;
   const hasAnswer = typeof s.answer === "string" && s.answer.trim().length > 0;
   const blocked = s.mode === "casual_conversation" || s.mode === "out_of_scope"
+    || s.mode === "memory_rag_unavailable"
     || route === "out_of_scope" || s.error || String(s.mode || "").endsWith("error");
   const forecast = !blocked && route === "phase_prediction"
     && Array.isArray(s.top_phase_candidates) && s.top_phase_candidates.length > 0;
@@ -118,7 +116,7 @@ function updateSuggestionProgress(question, payload) {
   }
 
   if ((followup || state) && suggestionProgress.lastTopic) {
-    // A reason/data explanation opens the next level: brief, Bangla, and simple.
+    // A reason/data explanation opens the next level: a Bangla explanation.
     suggestionProgress.canClarify = true;
     const normalize = (text) => String(text || "").trim().toLowerCase()
       .replace(/\s+/g, " ").replace(/[.!?]+$/, "");
@@ -224,6 +222,9 @@ function renderTechnicalDetails(s) {
 
 function renderResponse(payload) {
   const s = payload.summary || {};
+  if (s.mode === "out_of_scope") {
+    return `<div class="answer">${esc(s.answer)}</div>`;
+  }
   if (s.mode === "casual_conversation") {
     return `<div class="meta">${pill("casual conversation", "strong")}${pill(s.llm_used ? "LLM reply" : "standard reply")}</div>
       <div class="answer">${esc(s.answer || "Hello! Ask me about the wind forecast or its evidence.")}</div>`;

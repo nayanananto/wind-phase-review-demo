@@ -110,6 +110,14 @@ Hugging Face Docker Spaces and Render.
   in the main response.
 - Feedback controls and review-status panels are hidden from the demo interface.
   The underlying research feedback API remains unchanged.
+- Follow-up explanations must come from the LLM; a failed request, empty/invalid
+  answer, missing context, or exhausted public LLM allowance does not display a
+  canned scientific explanation. The interface shows only: "This HITL system
+  does not support this request." Provider failure categories are logged without
+  secrets. A provider outage or rate limit can still prevent an LLM response.
+- Ten distinct rotating examples follow the current forecast, state, or history
+  branch. Similar wording variants for simpler/shorter explanations and evidence
+  strength have been removed. Failed answers do not advance suggestion progress.
 - A separate, tool-free casual agent handles greetings, thanks and short social
   exchanges. It uses the configured LLM for free-form wording, with standard
   replies if the API is unavailable. Casual replies never alter forecast memory

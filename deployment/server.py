@@ -158,6 +158,35 @@ def defaults(request: Request) -> dict[str, Any]:
     }
 
 
+def _unsupported_summary(engine: str = "langgraph") -> dict[str, Any]:
+    # No evidence tables, fallback explanations or LLM diagnostics in the reply.
+    return {
+        "intent": "out_of_scope", "mode": "out_of_scope",
+        "answer": OUT_OF_SCOPE_ANSWER,
+        "demo_data_mode": STARTUP_STATUS.get("status", DATA_MODE),
+        "agent_graph": {"enabled": True, "engine": engine, "route": "out_of_scope"},
+    }
+
+
+def _explanation_unavailable(result: dict[str, Any], *, use_llm: bool) -> bool:
+    mode = str(result.get("mode") or "")
+    if mode in {"out_of_scope", "memory_rag_unavailable", "memory_rag_missing_context"}:
+        return True
+    if result.get("agent_graph", {}).get("route") == "out_of_scope":
+        return True
+    if result.get("answer") == OUT_OF_SCOPE_ANSWER:
+        return True
+    # Keep the offline scientific tools intact. A configured public LLM which
+    # failed or exhausted its allowance must not silently substitute prose.
+    if os.getenv("OPENAI_API_KEY") and not use_llm:
+        return result.get("agent_graph", {}).get("route") != "feedback"
+    return bool(use_llm and (
+        result.get("explanation_mode") == "heuristic"
+        or mode.startswith("deterministic_")
+        or mode in {"heuristic", "hitl_gru_live_phase_prediction"}
+    ))
+
+
 @app.post("/api/hitl")
 def run_hitl(body: DemoRequest, request: Request) -> dict[str, Any]:
     question = body.question.strip()
@@ -168,12 +197,7 @@ def run_hitl(body: DemoRequest, request: Request) -> dict[str, Any]:
     # Reject unsupported engineering/general tasks before the legacy memory
     # rewrite can mistake a wind-related question for a scientific follow-up.
     if is_unsupported_request(question):
-        return {"summary": {
-            "intent": "out_of_scope", "mode": "out_of_scope",
-            "answer": OUT_OF_SCOPE_ANSWER,
-            "demo_data_mode": STARTUP_STATUS.get("status", DATA_MODE),
-            "agent_graph": {"enabled": True, "engine": "domain_guard", "route": "out_of_scope"},
-        }}
+        return {"summary": _unsupported_summary("domain_guard")}
     casual_intent = classify_casual_message(question)
     # The original JSON memory store requires one writer at a time.
     if not PROCESS_LOCK.acquire(timeout=2):
@@ -202,7 +226,16 @@ def run_hitl(body: DemoRequest, request: Request) -> dict[str, Any]:
             enable_agent_graph=True,
             feedback_path=RUNTIME_DIR / "sessions" / session_id / "feedback.jsonl",
         )
+        pipeline.require_llm_explanations = bool(os.getenv("OPENAI_API_KEY")) or use_llm
         result = pipeline.process(question=question, thread_id=session_id)
+        if _explanation_unavailable(result, use_llm=use_llm):
+            diagnostic = (result.get("memory_rag_debug") or {}).get("llm_error")
+            if not isinstance(diagnostic, dict):
+                diagnostic = getattr(pipeline.reasoner, "last_error", None) or {}
+            LOGGER.warning("Explanation unavailable: category=%s status=%s",
+                           diagnostic.get("category", "not_attempted_or_invalid_answer"),
+                           diagnostic.get("status_code"))
+            return {"summary": _unsupported_summary()}
         summary = original_ui._summarize_response(result)
         summary.pop("model_artifact_path", None)
         summary.pop("thread_id", None)
@@ -214,9 +247,6 @@ def run_hitl(body: DemoRequest, request: Request) -> dict[str, Any]:
             answer = answer.replace("latest live semantic token sequence", "snapshot semantic token sequence")
             answer = answer.replace("live wind state", "snapshot wind state")
             summary["answer"] = answer
-        if os.getenv("OPENAI_API_KEY") and not use_llm:
-            summary["critic_warnings"] = [*(summary.get("critic_warnings") or []),
-                "Daily explanation allowance reached; deterministic responses remain available."]
         return {"summary": summary}
     except Exception:
         LOGGER.exception("HITL demo request failed")

@@ -242,11 +242,10 @@ class UnsupportedRequestTests(unittest.TestCase):
             with self.subTest(question=question):
                 self.assertFalse(is_unsupported_request(question))
 
-    def test_fallback_wording_is_unchanged(self):
+    def test_unsupported_wording_is_concise(self):
         self.assertEqual(
             OUT_OF_SCOPE_ANSWER,
-            "I cannot handle that request in this HITL pipeline. Ask about semantic phase predictions, "
-            "compressed wind states, similar historical regimes, or human feedback.",
+            "This HITL system does not support this request.",
         )
 
 

@@ -9,6 +9,9 @@ from typing import Any, Literal, TypedDict
 import pandas as pd
 from langgraph.graph import END, StateGraph
 
+from app.hitl.messages import UNSUPPORTED_REQUEST_ANSWER
+from app.llm.semantic_reasoner import is_plain_text_answer
+
 
 RouteName = Literal[
     "out_of_scope",
@@ -419,11 +422,9 @@ class ControlledHITLAgentGraph:
 
     def _answer_from_memory(self, state: HITLAgentState) -> HITLAgentState:
         memory = state.get("memory") or {}
-        last = self._select_memory_result_for_question(state["question"], memory)
         selected_chunks = self._select_memory_chunks(state["question"], memory)
         payload = {
             "current_question": state["question"],
-            "previous_result": last,
             "selected_memory": selected_chunks,
             "memory_summary": {
                 "stored_turns": len(memory.get("turns") or []) if isinstance(memory, dict) else 0,
@@ -449,10 +450,15 @@ class ControlledHITLAgentGraph:
         llm_attempted = bool(selected_chunks and self.pipeline.enable_llm and self.pipeline.llm_available and self.pipeline.reasoner)
         llm_error = None
         try:
-            llm_payload = self._llm_memory_rag(state["question"], payload) if selected_chunks else None
-        except Exception as exc:
+            llm_payload = self._llm_memory_rag(state["question"], payload) if llm_attempted else None
+        except Exception:
             llm_payload = None
-            llm_error = str(exc)
+            # Never put raw provider exceptions (which can contain secrets) in a response.
+            llm_error = {"category": "memory_answer_error", "retryable": False}
+        if llm_attempted and not llm_payload and llm_error is None:
+            llm_error = getattr(self.pipeline.reasoner, "last_error", None)
+            if not isinstance(llm_error, dict):
+                llm_error = {"category": "invalid_answer", "retryable": False}
         memory_rag_debug = {
             "selected_chunk_ids": [str(chunk.get("evidence_id")) for chunk in selected_chunks],
             "selected_chunk_kinds": [str(chunk.get("kind")) for chunk in selected_chunks],
@@ -460,15 +466,13 @@ class ControlledHITLAgentGraph:
             "llm_attempted": llm_attempted,
             "llm_used": bool(llm_payload),
             "llm_output_format": llm_payload.get("llm_output_format") if isinstance(llm_payload, dict) else None,
+            "llm_error": llm_error,
             "llm_fallback_reason": None
             if llm_payload
             else (
-                llm_error
-                or (
-                    f"LLM was not attempted: {', '.join(llm_blockers)}."
-                    if not llm_attempted
-                    else "LLM returned no valid JSON answer; deterministic memory-RAG fallback was used."
-                )
+                f"LLM was not attempted: {', '.join(llm_blockers)}."
+                if not llm_attempted
+                else f"LLM explanation unavailable: {(llm_error or {}).get('category', 'invalid_answer')}."
             ),
         }
         if llm_payload:
@@ -478,26 +482,13 @@ class ControlledHITLAgentGraph:
                 "evidence_pack": payload,
                 "memory_rag_debug": memory_rag_debug,
             }
-        elif not selected_chunks:
+        else:
             result = {
-                "mode": "memory_rag_missing_context",
-                "answer": (
-                    "I do not have enough relevant session-memory evidence to answer that follow-up. "
-                    "Run `predict next phase`, `explain current live state`, or `retrieve similar historical windows` first."
-                ),
+                "mode": "memory_rag_unavailable" if selected_chunks else "memory_rag_missing_context",
+                "answer": UNSUPPORTED_REQUEST_ANSWER,
                 "evidence": [],
                 "evidence_pack": payload,
                 "memory_rag_debug": memory_rag_debug,
-                "human_review_prompt": "Run a core HITL tool first, then ask a grounded follow-up.",
-            }
-        else:
-            result = {
-                "mode": "memory_rag_followup",
-                "answer": self._memory_rag_followup_text(state["question"], last, selected_chunks),
-                "evidence": [chunk["evidence_id"] for chunk in selected_chunks],
-                "evidence_pack": payload,
-                "memory_rag_debug": memory_rag_debug,
-                "human_review_prompt": "Review whether this memory-grounded clarification matches the stored HITL evidence.",
             }
         return {
             **state,
@@ -690,13 +681,30 @@ class ControlledHITLAgentGraph:
         for key in ("last_phase_result", "last_retrieval_result", "last_tool_result"):
             add_result_chunks(key, memory.get(key, {}) if isinstance(memory.get(key), dict) else {})
 
+        # Several memory slots can point to the same result. Send each piece of
+        # evidence once rather than repeating its table/answer under three IDs.
+        if any(chunk.get("kind") == "similar_windows" for chunk in chunks):
+            chunks.append({
+                "evidence_id": "memory:retrieval_distance_definition",
+                "kind": "retrieval_semantics",
+                "title": "Meaning of d / retrieval distance in historical windows",
+                "text": (
+                    "d (retrieval_distance) compares the query window's numerical wind-pattern "
+                    "embedding with a historical window's embedding. Smaller means a closer match; "
+                    "larger means less similar within the returned set. It is not a distance in meters, "
+                    "wind speed, probability, or a difference between token IDs or token sequences. "
+                    "The snapshot live-window retriever uses cosine distance between embeddings."
+                ),
+                "payload": {"field": "retrieval_distance", "smaller_is_closer": True},
+            })
         deduped: list[dict[str, Any]] = []
         seen: set[str] = set()
         for chunk in chunks:
-            evidence_id = str(chunk.get("evidence_id"))
-            if evidence_id in seen:
+            signature = json.dumps(_json_safe({"kind": chunk.get("kind"), "payload": chunk.get("payload")}),
+                                   sort_keys=True, ensure_ascii=False)
+            if signature in seen:
                 continue
-            seen.add(evidence_id)
+            seen.add(signature)
             deduped.append(chunk)
         return deduped
 
@@ -755,7 +763,7 @@ class ControlledHITLAgentGraph:
         return chunks[: max(1, int(limit))]
 
     def _llm_memory_rag(self, question: str, payload: dict[str, Any]) -> dict[str, Any] | None:
-        if not self.pipeline.llm_available or not self.pipeline.reasoner:
+        if not self.pipeline.enable_llm or not self.pipeline.llm_available or not self.pipeline.reasoner:
             return None
         selected_ids = [str(chunk.get("evidence_id")) for chunk in payload.get("selected_memory", [])]
         review_chunks = [
@@ -774,8 +782,9 @@ class ControlledHITLAgentGraph:
             "Do not say the model changed; say the session review state was accepted, flagged, or noted. "
             "When a human_review record is present, the answer must include one explicit sentence beginning exactly with "
             "'Human review state:' that summarizes the review action and note.\n"
-            "If the selected memory is insufficient, say exactly what core HITL tool should be run next.\n"
-            "Return only valid JSON with keys: answer, evidence, human_review_prompt.\n"
+            f"If the selected memory is insufficient or the request is unsupported, set answer to exactly: {UNSUPPORTED_REQUEST_ANSWER}\n"
+            "Return only valid JSON with keys: answer, evidence, human_review_prompt. "
+            "answer must be a nonempty string, not a nested object or list.\n"
             "The evidence value must be a list of evidence_id strings from selected_memory.\n\n"
             f"User question: {question}\n"
             f"Context:\n{json.dumps(_json_safe(payload), ensure_ascii=False)}\n"
@@ -786,7 +795,7 @@ class ControlledHITLAgentGraph:
             result = self.pipeline.reasoner.invoke_json(prompt)
             raw_text = None
         if not isinstance(result, dict):
-            if raw_text:
+            if is_plain_text_answer(raw_text):
                 answer = str(raw_text).strip()
                 answer = self._ensure_review_sentence(answer, review_chunks)
                 return {
@@ -799,9 +808,9 @@ class ControlledHITLAgentGraph:
                 }
             return None
         answer = result.get("answer")
-        if not answer:
+        if not isinstance(answer, str) or not answer.strip():
             return None
-        answer = self._ensure_review_sentence(str(answer), review_chunks)
+        answer = self._ensure_review_sentence(answer.strip(), review_chunks)
         evidence = result.get("evidence")
         if not isinstance(evidence, list):
             evidence = selected_ids
@@ -823,6 +832,8 @@ class ControlledHITLAgentGraph:
 
     @staticmethod
     def _ensure_review_sentence(answer: str, review_chunks: list[dict[str, Any]]) -> str:
+        if answer.strip() == UNSUPPORTED_REQUEST_ANSWER:
+            return UNSUPPORTED_REQUEST_ANSWER
         if not review_chunks or "Human review state:" in answer:
             return answer
         review = review_chunks[0].get("payload", {}) if isinstance(review_chunks[0].get("payload"), dict) else {}
@@ -1505,13 +1516,20 @@ class ControlledHITLAgentGraph:
     def _finalize(self, state: HITLAgentState) -> HITLAgentState:
         if state.get("route") == "out_of_scope":
             result = {
-                "answer": (
-                    "I cannot handle that request in this HITL pipeline. Ask about semantic phase predictions, "
-                    "compressed wind states, similar historical regimes, or human feedback."
-                )
+                "mode": "out_of_scope",
+                "answer": UNSUPPORTED_REQUEST_ANSWER,
             }
         else:
             result = dict(state.get("result") or {})
+
+        # Preserve the scientific tables, but never save a canned explanation as
+        # though it were displayed to a public visitor whose LLM call failed.
+        needs_llm = self.pipeline.enable_llm or getattr(self.pipeline, "require_llm_explanations", False)
+        if needs_llm and state.get("route") in {"phase_prediction", "retrieve_similar", "explain_state"}:
+            mode = str(result.get("mode") or "")
+            if (result.get("explanation_mode") == "heuristic" or mode.startswith("deterministic_")
+                    or mode in {"heuristic", "hitl_gru_live_phase_prediction"}):
+                result["answer"] = UNSUPPORTED_REQUEST_ANSWER
 
         agent_trace = self._append_trace(state, "finalize")
         result["agent_graph"] = {

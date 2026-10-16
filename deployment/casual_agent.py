@@ -12,12 +12,11 @@ import re
 from typing import Literal
 import unicodedata
 
+from app.hitl.messages import UNSUPPORTED_REQUEST_ANSWER
+
 
 CasualIntent = Literal["greeting", "wellbeing", "thanks", "farewell", "acknowledgement"]
-OUT_OF_SCOPE_ANSWER = (
-    "I cannot handle that request in this HITL pipeline. Ask about semantic phase predictions, "
-    "compressed wind states, similar historical regimes, or human feedback."
-)
+OUT_OF_SCOPE_ANSWER = UNSUPPORTED_REQUEST_ANSWER
 
 # Whole-message coverage is required. A polite prefix cannot hide another task.
 _CLAUSES: tuple[tuple[CasualIntent, re.Pattern[str]], ...] = tuple(
