@@ -72,7 +72,7 @@ class DeploymentTests(unittest.TestCase):
             "Why was this phase selected instead of the other candidate phases?",
             "Explain the previous answer in simple language without technical terms.",
             "Explain the previous answer more briefly in two or three sentences.",
-            "Explain the previous answer in Bengali using simple language.",
+            "Now Explain in Bengali using simple language.",
             "How strong is the evidence supporting the previous phase forecast?",
             "Explain the data in the retrieved historical windows.",
             "Explain what d (retrieval distance) means in the retrieved historical windows.",

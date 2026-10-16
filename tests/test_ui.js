@@ -17,7 +17,7 @@ const PROMPTS = Object.freeze({
   whyPhase: "why was this phase selected?",
   closestWindow: "Which retrieved historical window is most similar to the current window?",
   alternatives: "Why was this phase selected instead of the other candidate phases?",
-  bangla: "Explain the previous answer in Bengali using simple language.",
+  bangla: "Now Explain in Bengali using simple language.",
   explainRetrieved: "Explain the data in the retrieved historical windows.",
   retrievalDistance: "Explain what d (retrieval distance) means in the retrieved historical windows.",
   farthestWindow: "Which of the retrieved historical windows is farthest from the current window?",
