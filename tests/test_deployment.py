@@ -73,6 +73,7 @@ class DeploymentTests(unittest.TestCase):
             "Explain the previous answer in simple language without technical terms.",
             "Explain the previous answer more briefly in two or three sentences.",
             "Now Explain in Bengali using simple language.",
+            "Now answer it in bengali.",
             "How strong is the evidence supporting the previous phase forecast?",
             "Explain the data in the retrieved historical windows.",
             "Explain what d (retrieval distance) means in the retrieved historical windows.",
