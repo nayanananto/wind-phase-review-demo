@@ -22,14 +22,11 @@ The public demo uses a fixed KBOS observation snapshot ending on 11 June 2026 at
 
 ## How it works
 
-- Wind observations are compressed into numerical summaries to retrieve similar
-  historical windows.
-- The forecasting code estimates the next wind pattern from past pattern changes.
-- LangGraph manages requests and conversation memory. LangChain passes retrieved
-  evidence to the LLM for explanations and follow-up answers.
+![Pipeline showing wind data, task routing, LLM explanations, and session memory](docs/pipeline.svg)
 
-The LLM is the application's explanation layer. It explains the forecast and its
-evidence without changing the predicted wind pattern.
+The router selects the needed wind task. Follow-up questions reuse stored results
+(dashed arrows). The forecasting code predicts the next wind phase; the LLM
+explains the evidence without changing the prediction.
 
 Built with Python, FastAPI, LangChain, LangGraph, scikit-learn, and Docker.
 
