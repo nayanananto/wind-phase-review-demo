@@ -1,14 +1,3 @@
----
-title: Wind Phase Review Lab
-emoji: 🌬️
-colorFrom: blue
-colorTo: green
-sdk: docker
-app_port: 7860
-pinned: false
-license: mit
----
-
 # Wind Phase Review Lab
 
 An interactive wind forecasting application with retrieval-augmented generation
@@ -22,24 +11,48 @@ The public demo uses a fixed KBOS observation snapshot ending on 11 June 2026 at
 
 ## How it works
 
+Each question goes through a small LangGraph state machine. The graph is
+controlled, not free-form: a fixed set of steps passes a shared state from one
+step to the next. The LLM never decides which step runs.
+
 <p align="center">
-  <img src="docs/pipeline_walkthrough.gif" alt="Animated walkthrough showing a prompt moving through LangGraph routing, controlled wind tools, evidence retrieval, LLM explanation, and session memory" width="100%">
+  <img src="docs/workflow_diagram.png" alt="Workflow diagram showing the web server starting a LangGraph state machine that loads session memory, detects follow-ups, routes a new request to one task, builds a prompt, calls the LangChain LLM, and saves the turn" width="100%">
 </p>
 
-The walkthrough shows both paths: a new request runs the required wind task, while
-a follow-up question can reuse the result and evidence stored in session memory.
+### Step by step
 
-<details>
-<summary><strong>View the complete static architecture</strong></summary>
-<br>
+**1. Session and memory.** The web server gives each user a session, and the
+session ID is used as the conversation thread. The first step loads that
+thread's past turns and last results from a small JSON memory file.
 
-![Static pipeline showing wind data, task routing, LLM explanations, and session memory](docs/pipeline.svg)
+**2. Follow-up or new request?** The graph checks whether the question refers
+back to the last answer, such as "why was this phase selected?". It does this
+with simple rules: stored memory plus cue words in the question.
 
-</details>
+- **Follow-up:** the graph picks the most relevant notes from memory and asks
+  the LLM to answer using only those notes. It does not run any task again.
+- **New request:** a router picks one of three tasks by matching keywords in the
+  question: predict the next wind phase, find similar past windows, or explain
+  the current wind state.
 
-The router selects the needed wind task. Follow-up questions reuse stored results
-(dashed arrows). The forecasting code predicts the next wind phase; the LLM
-explains the evidence without changing the prediction.
+**3. Task, evidence, then explanation.** Each task runs ordinary Python code
+first:
+
+- **Forecaster:** predicts the next wind phase with a Markov chain. It counts
+  which phase followed the current one in past data.
+- **Retriever:** finds the nearest historical windows using cosine similarity on
+  embeddings.
+- **Explainer:** collects the current state and its regime profile.
+
+The result is an evidence pack. It is put into a prompt and sent to the LLM
+through LangChain (`ChatOpenAI`). The LLM only turns the evidence into plain
+language. It does not choose the task or change the prediction.
+
+**4. Save and reply.** The final step stores the result and a short trace in
+session memory, so the next question can build on it, and returns the answer.
+
+**LangGraph and LangChain.** LangGraph manages the flow: steps, shared state and
+routing. LangChain is only used as the LLM client inside those steps.
 
 Built with Python, FastAPI, LangChain, LangGraph, scikit-learn, and Docker.
 
