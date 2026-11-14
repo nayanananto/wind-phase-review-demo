@@ -22,7 +22,20 @@ The public demo uses a fixed KBOS observation snapshot ending on 11 June 2026 at
 
 ## How it works
 
-![Pipeline showing wind data, task routing, LLM explanations, and session memory](docs/pipeline.svg)
+<p align="center">
+  <img src="docs/pipeline_walkthrough.gif" alt="Animated walkthrough showing a prompt moving through LangGraph routing, controlled wind tools, evidence retrieval, LLM explanation, and session memory" width="100%">
+</p>
+
+The walkthrough shows both paths: a new request runs the required wind task, while
+a follow-up question can reuse the result and evidence stored in session memory.
+
+<details>
+<summary><strong>View the complete static architecture</strong></summary>
+<br>
+
+![Static pipeline showing wind data, task routing, LLM explanations, and session memory](docs/pipeline.svg)
+
+</details>
 
 The router selects the needed wind task. Follow-up questions reuse stored results
 (dashed arrows). The forecasting code predicts the next wind phase; the LLM
